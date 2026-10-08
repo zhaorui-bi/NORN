@@ -4,7 +4,9 @@
 
 NORN 用年代条件球面神经算子表示 0–60 Ma 的厚度历史，将古厚度记录的年龄边缘似然、现代厚度观测与适用区域内的运动学及体积预算写入同一个优化目标。训练针对一组观测求解；训练后的 checkpoint 可以独立生成历史地图和点位预测。
 
-![NORN release architecture](docs/assets/architecture.svg)
+![NORN 方法框架：空间输入、年代条件 SFNO、厚度历史、数据与物理一致性及联合反演](docs/design/figures/norn_framework.png)
+
+完整方法学见 [中文 Methods PDF](docs/design/NORN_Methods_CN.pdf) 与 [LaTeX 源文件](docs/design/NORN_Methods_CN.tex)。框架图直接采用原项目 `fig/norn_framework.png`；图中地图为示意，版本实现状态见下文。
 
 > 当前版本：**0.2.0，研究软件 Beta**。这是可安装、可训练、可恢复和可推理的软件发布版本；运行验证不等于全球古厚度已经获得地学验证。真实数据样例保留 `unverified_proxy` 标记，默认输出点估计，不提供已校准置信区间。
 
@@ -146,19 +148,51 @@ maps = predictor.predict_grid([0, 30, 60])
 
 也可使用 `norn predict-points --checkpoint best.pt --csv queries.csv --output predictions.csv`，输入列为 `longitude,latitude,age_ma`。更多说明见 [推理接口](docs/inference.md)。
 
-## 方法与实现范围
+## 方法学
 
-网络输出正厚度场：
+本节依据原项目 `methods/NORN_Methods_CN.tex` 概述完整方法设计。含符号表、编号公式与完整推导的正文见 [中文 Methods](docs/design/NORN_Methods_CN.pdf)；发布代码的计算细节和源码对应关系见 [方法实现说明](docs/method.md)。
+
+NORN 将全球古地壳厚度重建表述为受观测和物理关系约束的时空反演。框架图 A–C 使用年代条件 SFNO 表示正厚度场，卷积编码器、球谐谱分支和局部卷积分支共同提取空间结构，年龄通过 MLP 与 FiLM 调节隐藏通道：
 
 $$H_\theta(x,a)=\operatorname{softplus}(F_\theta(X,a)(x))+\epsilon.$$
 
-连续年龄查询在相邻锚点之间线性插值。古观测通过年龄节点的 Student-t 混合似然参与拟合，每条记录贡献一次证据；现代数据通过空间块平均的高斯负对数似然约束 0 Ma。
+0–60 Ma 的 61 个锚点共享网络参数，连续年龄在相邻锚点之间线性插值。厚度历史由所有证据联合拟合；更换观测集合通常需要重新优化。
+
+框架图 D 对古厚度记录的真实年龄进行边缘化，在每个年龄节点查询重建古位置，而不是把年龄区间复制成多条独立标签：
+
+$$p(y_i\mid\theta)\approx\sum_k w_{ik}\,
+t_\nu\!\left(y_i;H_\theta(x_i(a_{ik}),a_{ik}),\sigma_i\right),
+\qquad \sum_k w_{ik}=1.$$
+
+每条记录贡献一个混合似然项。现代数据通过空间块平均的高斯负对数似然约束 0 Ma；误差尺度按记录或来源设定。
+
+框架图 E 在相同参考密度的薄层近似下，采用向现代推进的时间 $\tau=60-a$，连接厚度演化、材料运动、面积变形与净源汇：
+
+$$\frac{\partial H}{\partial\tau}+\nabla_s\cdot(H\mathbf v)=q,
+\qquad q=q_{\rm mag}-q_{\rm loss}.$$
+
+材料轨迹一致性通过以下残差进入反演；无源条件下的面积变形关系为 $H_2=H_1/J_A$，伸展导致减薄，压缩导致增厚：
+
+$$r_{\rm traj}=H(x_2,\tau_2)-H(x_1,\tau_1)
+-\int_{\tau_1}^{\tau_2}\left(q-H\nabla_s\cdot\mathbf v\right)\,d\tau.$$
+
+对边界以 $\mathbf v_b$ 运动的控制域，弱形式体积预算显式计算相对边界通量与内部净源，不假定全球活动地壳总体积恒定：
+
+$$\frac{dV_\Omega}{d\tau}=-\oint_{\partial\Omega}
+H(\mathbf v-\mathbf v_b)\cdot\mathbf n\,dl+\int_\Omega q\,dA,
+\qquad V_\Omega=\int_\Omega H\,dA.$$
+
+过程先验包括洋壳出生厚度 $H_{\rm birth}=Q_{\rm retained}/u_{\rm full}$ 与低维净源表示 $q_{\rm net}(x,\tau)=\sum_j c_j(\tau)\psi_j(x)$。系数受到幅值、符号和变化约束；当前软件采用外部指定的时空基函数和有界系数，并支持完整协方差先验。相关约束共享证据预算，未知重要通量时屏蔽完整预算因子。
+
+框架图 F 将数据、轨迹、区域预算和过程先验写入同一优化目标，联合更新网络参数与受限源系数：
 
 $$\mathcal L=\lambda_o\mathcal L_{age}+\lambda_0\mathcal L_{modern}
 +\lambda_k\mathcal L_{traj}+\lambda_v\mathcal L_{budget}
 +\lambda_p\mathcal L_{prior}+\lambda_r\mathcal R.$$
 
-物理模块使用向现代推进的时间 $\tau=60-a$。支持净源项 $q=\sum_j c_j\psi_j$，系数有界并具有指定协方差先验；不提供自由逐像素噪声或源项头。完整方程和源码对应关系见 [方法说明](docs/method.md)。
+训练使用两遍梯度重计算与 AdamW，在两遍之间保持参数固定，并记录原始联合目标。完整方法不采用自由逐像素噪声或源项头。
+
+## 当前实现范围
 
 | 功能 | 软件实现 | 当前真实数据配置 |
 |---|---|---|
@@ -206,7 +240,7 @@ norn/
 └── .github/workflows/    # 测试和构建 CI
 ```
 
-目录组织参考 [OlmoEarth](https://github.com/allenai/olmoearth_pretrain) 的库、脚本、文档和测试分工；NORN 没有使用其模型权重或训练实现。原项目 `fig` 与中文 Methods 的设计脉络保留在 [设计资料](docs/design/README.md)。历史试验 README 和旧脚本已归档，旧挑战集结果不作为本版精度证据。
+目录组织参考 [OlmoEarth](https://github.com/allenai/olmoearth_pretrain) 的库、脚本、文档和测试分工；NORN 没有使用其模型权重或训练实现。框架图和方法学正文直接采用原项目 `fig` 与 `methods` 的文件，见 [框架图与 Methods](docs/design/README.md)。历史试验 README 和旧脚本已归档，旧挑战集结果不作为本版精度证据。
 
 ## 贡献与许可
 

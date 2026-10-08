@@ -1,6 +1,6 @@
 # NORN 0.2 方法与实现
 
-本文描述发布代码的实际计算路径。历史中文 PDF 与框架图见 [设计资料](design/README.md)。原始文档的“待接入”状态保留为历史记录，本页和运行 manifest 描述当前状态。
+完整方法学采用原项目 `methods` 目录的 [中文 Methods PDF](design/NORN_Methods_CN.pdf) 与 [LaTeX 源文件](design/NORN_Methods_CN.tex)，框架图直接采用 `fig` 目录的 [原图](design/figures/norn_framework.png)。本文补充发布代码的实际计算路径与源码对应关系。原文中的“待接入”记录文档编写时的状态，本页和运行 manifest 描述当前版本。
 
 ## 反演变量与网络
 
