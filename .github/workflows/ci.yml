@@ -54,7 +54,21 @@ jobs:
         run: uv run --no-sync python -c "import importlib.util; assert importlib.util.find_spec('torch') is None"
       - if: matrix.profile == 'cpu'
         run: uv run --no-sync python -c "import torch, torch_harmonics; assert torch.version.cuda is None"
-      - run: uv run --no-sync pytest -q
+      - run: uv run --no-sync pytest -q --junitxml=pytest-results.xml
+      - name: Annotate test failures
+        if: failure()
+        run: |
+          uv run --no-sync python - <<'PY'
+          from pathlib import Path
+          from xml.etree import ElementTree
+          report = Path('pytest-results.xml')
+          if report.exists():
+              for case in ElementTree.parse(report).iter('testcase'):
+                  for failure in list(case.findall('failure')) + list(case.findall('error')):
+                      message = (failure.text or failure.get('message', ''))[:30000]
+                      message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f"::error title={case.get('name')}::{message}")
+          PY
 
   build:
     needs: [lint, test]
