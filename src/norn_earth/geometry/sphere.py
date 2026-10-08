@@ -109,6 +109,16 @@ def polygon_signed_area_steradian(poly_v):
     Vertices connected by great-circle arcs; sign follows vertex orientation.
     """
     poly = np.asarray(poly_v, dtype=float)
+    if poly.ndim != 2 or poly.shape[1] != 3 or len(poly) < 3 or not np.isfinite(poly).all():
+        raise ValueError("Polygon vertices must be a finite (N, 3) array with N >= 3")
+    # A repeated closing vertex creates zero-length edges. Their undefined
+    # tangent directions otherwise make the orientation depend on roundoff.
+    keep = np.r_[True, np.linalg.norm(np.diff(poly, axis=0), axis=1) > 1e-12]
+    poly = poly[keep]
+    if len(poly) > 1 and np.linalg.norm(poly[-1] - poly[0]) <= 1e-12:
+        poly = poly[:-1]
+    if len(poly) < 3:
+        raise ValueError("A polygon needs at least three distinct consecutive vertices")
     n = len(poly)
     turn = 0.0
     for i in range(n):
@@ -119,7 +129,7 @@ def polygon_signed_area_steradian(poly_v):
         t_out /= max(np.linalg.norm(t_out), 1e-15)
         # signed turn at the vertex (positive for CCW seen from outside)
         turn += math.atan2(np.dot(cur, np.cross(t_out, t_in)), np.dot(t_in, t_out))
-    return turn - (n - 2) * math.pi
+    return turn - math.copysign((n - 2) * math.pi, turn)
 
 
 def spherical_winding(points_v, poly_v):

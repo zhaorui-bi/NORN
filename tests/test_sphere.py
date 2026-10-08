@@ -73,6 +73,26 @@ class TestSphere(unittest.TestCase):
         omega = sphere.polygon_signed_area_steradian(poly_v)
         self.assertAlmostEqual(abs(omega), np.pi / 2, delta=1e-9)  # spherical excess pi/2
 
+    def test_polygon_closure_and_duplicate_vertices_preserve_orientation(self):
+        ring = np.linspace(0, 360, 73)[:-1]
+        vertices = sphere.lonlat_to_vectors(ring, np.full_like(ring, 80.0))
+        reference = sphere.polygon_signed_area_steradian(vertices)
+        closed = np.concatenate([vertices, vertices[:1]])
+        repeated = np.insert(closed, 20, closed[20], axis=0)
+        self.assertAlmostEqual(sphere.polygon_signed_area_steradian(closed), reference, delta=1e-12)
+        self.assertAlmostEqual(
+            sphere.polygon_signed_area_steradian(repeated), reference, delta=1e-12
+        )
+        self.assertAlmostEqual(
+            sphere.polygon_signed_area_steradian(closed[::-1]), -reference, delta=1e-12
+        )
+        for lon in (ring, np.r_[ring, 0.0], np.r_[ring, 360.0]):
+            for oriented in (lon, lon[::-1]):
+                inside = sphere.points_in_polygon(
+                    [0, 0, 180], [85, 70, -85], oriented, np.full_like(oriented, 80.0)
+                )
+                np.testing.assert_array_equal(inside, [True, False, False])
+
     def test_unwrap_and_distance(self):
         unwrapped = sphere.unwrap_longitudes(np.array([170.0, -170.0]))
         self.assertAlmostEqual(abs(unwrapped[1] - unwrapped[0]), 20.0, delta=1e-9)

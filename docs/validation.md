@@ -1,5 +1,7 @@
 # 运行与发布验证
 
+以下 500 步训练与原安装包记录对应 0.2.0；0.2.1 的 uv 环境复核和 CI 修复记录位于文末。
+
 验证日期：2026-10-08。设备：**NVIDIA A40**。Python 3.9、PyTorch `2.5.1+cu121`、CUDA 12.1、torch-harmonics 0.8.0、pygplates 1.0.0。依赖版本见 [环境管理](environment.md)。本文记录真实执行结果，不是预计指标。
 
 ## 真实数据训练
@@ -106,13 +108,13 @@ uv run --no-sync python scripts/validate_exports.py --run outputs/release_a40 --
 
 | 环境 | 测试结果 |
 |---|---|
-| Python 3.9，基础依赖，无 PyTorch | 81 passed，1 个需要 PyTorch 的模块跳过 |
-| Python 3.12，基础依赖，无 PyTorch | 81 passed，1 个需要 PyTorch 的模块跳过 |
-| Python 3.9，CPU SFNO，干净源码副本 | 93 passed，1 个 CUDA 测试跳过 |
-| Python 3.12，CPU SFNO | 93 passed，1 个 CUDA 测试跳过 |
-| Python 3.11，CUDA SFNO，NVIDIA A40 | 94 passed |
+| Python 3.9，基础依赖，无 PyTorch | 82 passed，1 个需要 PyTorch 的模块跳过 |
+| Python 3.12，基础依赖，无 PyTorch | 82 passed，1 个需要 PyTorch 的模块跳过 |
+| Python 3.9，CPU SFNO，干净源码副本 | 94 passed，1 个 CUDA 测试跳过 |
+| Python 3.12，CPU SFNO | 94 passed，1 个 CUDA 测试跳过 |
+| Python 3.11，CUDA SFNO，NVIDIA A40 | 95 passed |
 
-干净副本仅含待提交的源码文件，没有原始数据、`processed/`、checkpoint 或运行结果。原 CI 失败中，测试曾硬编码读取本地 `processed/test_window_registry.json`；现在注册表和现代厚度 DAT 均在测试临时目录生成。恢复训练的比较使用严格 float32 容差，同时核对步数与随机状态，避免并行 CPU 归约末位差异造成误报。
+干净副本仅含待提交的源码文件，没有原始数据、`processed/`、checkpoint 或运行结果。CI 失败有两处已复现原因：球面多边形首尾重复点形成零长度边，造成极区判断随浮点舍入变化；测试还曾硬编码读取本地 `processed/test_window_registry.json`；现在面积计算先去除连续重复点和重复闭合点，并正确处理反向环；新增闭合、重复和反向极区回归。注册表和现代厚度 DAT 均在测试临时目录生成。恢复训练的比较使用严格 float32 容差，同时核对步数与随机状态，避免并行 CPU 归约末位差异造成误报。
 
 新 CUDA 环境重新完成 100 步完整物理合成训练，初始／最终目标为 17.609287／−0.276919，现代面积 RMSE 为 0.056835 km，峰值分配显存 38.18 MiB。全部 13 个年代通过 NPZ、DAT、NetCDF、周期经度、小数年龄和独立 CPU checkpoint 推理核对。原 500 步真实 checkpoint 的全部 61 张地图也再次通过导出核对；新环境直接调用算子与原 NPZ 的最大差异为 0。
 

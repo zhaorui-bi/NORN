@@ -2,6 +2,8 @@
 
 ## 0.2.1
 
+- Stabilize spherical polygon orientation for repeated closing vertices and reversed rings.
+
 - Manage CPU and CUDA 12.1 environments with uv, one committed lockfile and a development dependency group.
 - Make CI tests independent of local datasets and verify Python 3.9/3.12, CPU SFNO, lint and built-wheel installation.
 - Remove historical experiment scripts/configs, duplicate CLI wrappers, redundant requirements files and the unused SFNO compatibility module.
