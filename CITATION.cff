@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "Please cite the software version and record the data and plate-model provenance used in your reconstruction."
+title: "NORN: chronology-aware spherical crustal-thickness inversion"
+version: 0.2.0
+date-released: 2026-10-08
+type: software
+authors:
+  - name: NORN contributors
+license: Apache-2.0

@@ -1,0 +1,10 @@
+# Tested local A40 runtime; install before pip install -e '.[sfno,kinematics,export,dev]'.
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1+cu121
+torch-harmonics==0.8.0
+numpy==2.0.2
+pandas==2.3.3
+scipy==1.13.1
+openpyxl==3.1.5
+pygplates==1.0.0
+xarray==2024.7.0

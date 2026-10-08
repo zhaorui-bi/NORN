@@ -1,0 +1,35 @@
+{
+  "model": {
+    "backbone": "small_time_conditioned_sfno",
+    "blocks": 4,
+    "width": 32,
+    "lmax": 32,
+    "mmax": 32,
+    "spectral_mode_ablation": [16, 64],
+    "time_conditioning": "low_frequency_features_and_FiLM",
+    "main_output_channels": 1,
+    "positive_output": "softplus_plus_epsilon",
+    "n_anchors": 61,
+    "anchor_step_myr": 1
+  },
+  "grid": {
+    "internal": "legendre_gauss_180x360",
+    "sht_fft_dtype": "float32",
+    "native_export": "cell_centers_64800_native_order",
+    "budget_check_grid": [90, 180]
+  },
+  "observation_model": {
+    "likelihood": "student_t",
+    "nu": 4,
+    "age_nodes": {"narrow_max": 3, "wide": 8, "wide_convergence_check": 16},
+    "weights_sum_to_one": true,
+    "pointwise_noise_head": false,
+    "source_scale_policy": "independently_calibrated_or_bounded_low_dimensional"
+  },
+  "environment": {
+    "note": "training environment NOT installed; installs require authorization",
+    "torch": "pin_at_install_time",
+    "torch_harmonics": "pin_commit_at_install_time",
+    "pygplates": "pin_at_install_time"
+  }
+}

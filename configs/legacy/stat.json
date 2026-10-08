@@ -1,0 +1,14 @@
+{
+  "variant": "NORN-Stat",
+  "trigger": "G1_kinematics failure -> no quantitative process losses",
+  "allowed": [
+    "chronology-aware interpolation and variational reconstruction",
+    "synthetic identifiability benchmark",
+    "uncertainty via ensemble/sensitivity with honest labels"
+  ],
+  "forbidden": [
+    "quantitative ridge/arc budget losses",
+    "claims about physical process history",
+    "global high-confidence ancient-thickness statements"
+  ]
+}

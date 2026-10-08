@@ -1,0 +1,12 @@
+include LICENSE README.md CHANGELOG.md CONTRIBUTING.md CITATION.cff .pre-commit-config.yaml
+recursive-include configs *.json
+recursive-include docs *.md *.svg *.png *.tex *.pdf
+recursive-include requirements *.txt
+recursive-include scripts *.py *.sh *.md
+recursive-include tests *.py
+recursive-include .github *.yml
+include data/README.md
+prune outputs
+prune processed
+prune data/external
+prune .venv

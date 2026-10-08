@@ -1,0 +1,13 @@
+{
+  "site_cluster_min_sep_km": 100.0,
+  "site_clusters_are_proxy_until_study_ids_exist": true,
+  "spatial_block_target_km": 1000.0,
+  "spatial_buffer_km": 300.0,
+  "chronological_windows_ma": [[15, 25], [40, 50]],
+  "optional_older_tail_window_ma": [50, 60],
+  "record_removed_entirely_if_support_overlaps_window": true,
+  "min_independent_clusters_per_primary_contrast": 30,
+  "P_A_removes_modern_block_labels_and_derived_calibration": true,
+  "P_B_modern_endpoints_allowed_by_task_definition": true,
+  "test_opened_once_after_freeze": true
+}
