@@ -15,7 +15,9 @@ class SphericalConv(nn.Module):
         try:
             from torch_harmonics import InverseRealSHT, RealSHT
         except ImportError as exc:
-            raise ImportError("Install norn-earth[sfno] to use the spherical operator") from exc
+            raise ImportError(
+                "Run uv sync --locked --extra cpu (or --extra cuda) to install the spherical operator"
+            ) from exc
         self.sht = RealSHT(nlat, nlon, lmax=lmax, mmax=mmax, grid="legendre-gauss")
         self.isht = InverseRealSHT(nlat, nlon, lmax=lmax, mmax=mmax, grid="legendre-gauss")
         # Frequency-dependent channelwise filtering and learned channel mixing.

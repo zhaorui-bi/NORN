@@ -212,9 +212,13 @@ def test_checkpoint_resume_standalone_inference_and_export(demo, tmp_path):
     train(uninterrupted)
     resumed_state = torch.load(checkpoint, weights_only=True)
     full_state = torch.load(Path(uninterrupted.output_dir) / "last.pt", weights_only=True)
+    assert resumed_state["completed_steps"] == full_state["completed_steps"] == 4
+    assert torch.equal(resumed_state["torch_rng_state"], full_state["torch_rng_state"])
     for key in ("model_state", "physics_state"):
         for name, value in resumed_state[key].items():
-            torch.testing.assert_close(value, full_state[key][name], rtol=0, atol=0)
+            # Parallel CPU kernels can change the last float32 bits between
+            # invocations, even with identical RNG and optimizer state.
+            torch.testing.assert_close(value, full_state[key][name], rtol=1e-6, atol=1e-8)
     moved = tmp_path / "standalone.pt"
     moved.write_bytes(checkpoint.read_bytes())
     # Inference must need neither original observations nor physics artifact.

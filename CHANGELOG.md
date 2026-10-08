@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Manage CPU and CUDA 12.1 environments with uv, one committed lockfile and a development dependency group.
+- Make CI tests independent of local datasets and verify Python 3.9/3.12, CPU SFNO, lint and built-wheel installation.
+- Remove historical experiment scripts/configs, duplicate CLI wrappers, redundant requirements files and the unused SFNO compatibility module.
+- Use the original framework figure and Methods documents; fix unsupported Markdown math macros.
+
 ## 0.2.0
 
 - Add an installable, configuration-driven `norn` CLI with preparation, training, evaluation, inference and a self-contained synthetic example.
@@ -14,4 +21,4 @@
 
 ## 0.1.0
 
-Initial research prototypes, statistical baselines and numerical helpers. Preserved under `scripts/legacy` and `docs/archive` for provenance.
+Initial research prototypes, statistical baselines and numerical helpers. Historical scripts and archived README are available in Git history; they were removed from the current source tree in 0.2.1.

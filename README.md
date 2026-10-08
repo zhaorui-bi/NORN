@@ -8,38 +8,33 @@ NORN 用年代条件球面神经算子表示 0–60 Ma 的厚度历史，将古�
 
 完整方法学见 [中文 Methods PDF](docs/design/NORN_Methods_CN.pdf) 与 [LaTeX 源文件](docs/design/NORN_Methods_CN.tex)。框架图直接采用原项目 `fig/norn_framework.png`；图中地图为示意，版本实现状态见下文。
 
-> 当前版本：**0.2.0，研究软件 Beta**。这是可安装、可训练、可恢复和可推理的软件发布版本；运行验证不等于全球古厚度已经获得地学验证。真实数据样例保留 `unverified_proxy` 标记，默认输出点估计，不提供已校准置信区间。
+> 当前版本：**0.2.1，研究软件 Beta**。这是可安装、可训练、可恢复和可推理的软件发布版本；运行验证不等于全球古厚度已经获得地学验证。真实数据样例保留 `unverified_proxy` 标记，默认输出点估计，不提供已校准置信区间。
 
-## 安装
+## 使用 uv 安装
 
-支持 Python **3.9–3.12**；新环境建议 Python 3.11。训练和推理需要 PyTorch 2.5.1 与 torch-harmonics 0.8.0。数据准备、配置检查和 CLI 帮助可以在不安装 PyTorch 的环境中使用。
-
-在本仓库根目录执行：
+环境统一由 `pyproject.toml` 与 `uv.lock` 管理。锁定配置支持 **Linux x86_64、Python 3.9–3.12**，默认 Python 3.11；CPU 与 CUDA 12.1 使用各自的官方 PyTorch 索引。
 
 ```bash
+# 如未安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
 git clone https://github.com/zhaorui-bi/NORN.git
 cd NORN
-python3 -m venv .venv
+
+# CPU 训练、推理与 NetCDF 导出
+uv sync --locked --extra cpu --extra export --no-dev
+
+# NVIDIA A40 / CUDA 12.1；与上面的 CPU 配置二选一
+# uv sync --locked --extra cuda --extra kinematics --extra export --no-dev
+
 source .venv/bin/activate
-python -m pip install --upgrade pip
-
-# CPU 环境
-python -m pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-python -m pip install -e '.[sfno,kinematics,export,dev]'
-
 norn --version
 norn --help
 ```
 
-本地 NVIDIA A40 验证使用 CUDA 12.1 版本的 PyTorch：
+`uv sync --locked --no-dev` 只安装数据准备所需的基础依赖，不安装 PyTorch。真实古位置重建需要 `--extra kinematics`；绘图可选 `--extra viz`。开发测试使用默认 `dev` 依赖组。不要同时启用 `cpu` 与 `cuda`，也不要使用 `--all-extras`。
 
-```bash
-python -m pip install -r requirements/a40-cu121.txt
-python -m pip install -e '.[sfno,kinematics,export,dev]'
-python -c 'import torch; print(torch.__version__, torch.cuda.get_device_name(0))'
-```
-
-如果已有 `uv`，可用 `uv pip install --python .venv/bin/python ...` 替代上述 pip 安装命令。基础安装为 `pip install -e .`；可选依赖 `sfno`、`kinematics`、`export`、`viz`、`dev` 分别提供球面模型、板块重建、NetCDF、绘图和开发工具。
+无需激活环境时，已同步的环境可通过 `uv run --no-sync norn ...` 使用。完整的环境切换、依赖更新、开发与构建步骤见 [环境管理](docs/environment.md)。
 
 ## 五分钟可运行示例
 
@@ -210,15 +205,16 @@ $$\mathcal L=\lambda_o\mathcal L_{age}+\lambda_0\mathcal L_{modern}
 ## 验证与开发
 
 ```bash
-python -m pytest -q
-ruff check src tests scripts
-ruff format --check src tests scripts
-python -m build
+uv sync --locked --extra cpu --extra export
+uv run --no-sync pytest -q
+uv run --no-sync ruff check src tests scripts
+uv run --no-sync ruff format --check src tests scripts
+uv build --no-sources
 ```
 
 测试包含周期经度、真实年龄插值、球面网格保守映射、完整目标的两遍梯度等价性、正向物理时间与源汇符号、未知通量屏蔽、证据重复计数、有界源项、断点恢复和离开原数据后的独立推理。CI 分别运行基础依赖和 CPU SFNO 环境。本地 A40 的实际配置、结果与产物见 [验证记录](docs/validation.md)。
 
-已在本地 A40 完成真实数据 **500 步训练**，联合目标 `13.52 → 5.01`，峰值显存约 **1.51 GiB**；同一 checkpoint 成功导出 **61 张 180×360 地图**，NPZ／DAT／NetCDF 数值核对通过。完整测试 **93 项通过**。这些结果验证软件运行与计算路径，地学精度仍需独立资料检验。
+已在本地 A40 完成真实数据 **500 步训练**，联合目标 `13.52 → 5.01`，峰值显存约 **1.51 GiB**；同一 checkpoint 成功导出 **61 张 180×360 地图**，NPZ／DAT／NetCDF 数值核对通过。回归测试覆盖核心数值与完整训练／推理流程。这些结果验证软件运行与计算路径，地学精度仍需独立资料检验。
 
 ## 仓库布局
 
@@ -232,15 +228,16 @@ norn/
 │   ├── losses/           # 统一的观测与联合目标
 │   └── training/         # 两遍训练、checkpoint 与恢复
 ├── configs/              # 通用、A40 和统计重建配置
-├── scripts/              # 兼容入口、官方复现脚本
-│   └── legacy/           # 历史实验，禁止用于本版结果复现
+├── scripts/              # 示例、A40 复现与导出核对脚本
 ├── tests/                # 单元、数值回归及端到端测试
 ├── docs/                 # 方法、数据、接口及验证文档
-├── requirements/         # 经验证的运行依赖版本
+├── pyproject.toml        # 依赖、CPU/CUDA 索引和开发工具
+├── uv.lock               # 完整依赖锁定
+├── .python-version       # 默认 Python 版本
 └── .github/workflows/    # 测试和构建 CI
 ```
 
-目录组织参考 [OlmoEarth](https://github.com/allenai/olmoearth_pretrain) 的库、脚本、文档和测试分工；NORN 没有使用其模型权重或训练实现。框架图和方法学正文直接采用原项目 `fig` 与 `methods` 的文件，见 [框架图与 Methods](docs/design/README.md)。历史试验 README 和旧脚本已归档，旧挑战集结果不作为本版精度证据。
+目录组织参考 [OlmoEarth](https://github.com/allenai/olmoearth_pretrain) 的库、脚本、文档和测试分工；NORN 没有使用其模型权重或训练实现。框架图和方法学正文直接采用原项目 `fig` 与 `methods` 的文件，见 [框架图与 Methods](docs/design/README.md)。旧实验脚本、旧配置及重复入口已从当前源码删除，可通过 Git 历史追溯。旧挑战集结果不作为本版精度证据。
 
 ## 贡献与许可
 

@@ -1,6 +1,8 @@
 import sys
 import unittest
 from pathlib import Path
+import json
+import tempfile
 
 import numpy as np
 import pandas as pd
@@ -170,18 +172,38 @@ if __name__ == "__main__":
 
 
 class TestWindowGuard(unittest.TestCase):
-    REG = Path(__file__).resolve().parents[1] / "processed" / "test_window_registry.json"
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.registry = Path(directory.name) / "registry.json"
+        self.registry.write_text(
+            json.dumps(
+                {
+                    "P-C_15_25": {"status": "reserved", "reason": "synthetic final holdout"},
+                    "P-A_modern_blocks": {
+                        "status": "reserved",
+                        "reason": "synthetic spatial holdout",
+                    },
+                    "P-C_40_50": {"status": "development_burned"},
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def test_reserved_window_refuses(self):
         with self.assertRaises(TestWindowError):
-            assert_window_usable("P-C_15_25", self.REG)
+            assert_window_usable("P-C_15_25", self.registry)
         with self.assertRaises(TestWindowError):
-            assert_window_usable("P-A_modern_blocks", self.REG)
+            assert_window_usable("P-A_modern_blocks", self.registry)
 
     def test_burned_window_selectable(self):
-        status = assert_window_usable("P-C_40_50", self.REG)
+        status = assert_window_usable("P-C_40_50", self.registry)
         self.assertEqual(status, "development_burned")
 
     def test_unknown_window_refuses(self):
         with self.assertRaises(TestWindowError):
-            assert_window_usable("P-C_99_99", self.REG)
+            assert_window_usable("P-C_99_99", self.registry)
+
+    def test_missing_registry_refuses(self):
+        with self.assertRaises(FileNotFoundError):
+            assert_window_usable("P-C_40_50", self.registry.with_name("missing.json"))

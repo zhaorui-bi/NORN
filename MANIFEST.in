@@ -1,8 +1,8 @@
 include LICENSE README.md CHANGELOG.md CONTRIBUTING.md CITATION.cff .pre-commit-config.yaml
+include uv.lock .python-version
 recursive-include configs *.json
-recursive-include docs *.md *.svg *.png *.tex *.pdf
-recursive-include requirements *.txt
-recursive-include scripts *.py *.sh *.md
+recursive-include docs *.md *.png *.tex *.pdf
+recursive-include scripts *.py *.sh
 recursive-include tests *.py
 recursive-include .github *.yml
 include data/README.md

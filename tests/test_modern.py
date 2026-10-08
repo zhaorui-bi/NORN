@@ -1,39 +1,40 @@
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-ROOT = Path(__file__).resolve().parents[2]
-
 from norn_earth.data.modern import assemble_modern_batch, load_modern_grid
 
 
 class TestModern(unittest.TestCase):
-    def test_load_real_dat(self):
-        path = ROOT / "present_crustal_thickness.dat"
-        if not path.is_file():
-            self.skipTest("source DAT not present")
-        grid = load_modern_grid(path)
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "modern.dat"
+        self.thickness = np.full((180, 360), 30.0)
+        self.thickness[122, 85] = 65.0
+        self.thickness[90, 0] = 7.5
+        lon, lat = np.meshgrid(np.arange(0.5, 360), np.arange(-89.5, 90))
+        np.savetxt(
+            self.path,
+            np.column_stack([lon.ravel(), lat.ravel(), -self.thickness.ravel()]),
+        )
+
+    def test_load_native_negative_encoded_dat(self):
+        grid = load_modern_grid(self.path)
         self.assertEqual(grid["H_km"].shape, (180, 360))
         self.assertTrue((grid["H_km"] > 0).all())
-        self.assertAlmostEqual(float(grid["H_km"].sum()), 0.0 + float(grid["H_km"].sum()))
-        # landmark sanity: Tibet thick, EPR thin
-        self.assertGreater(
-            grid["H_km"][np.argmin(abs(-89.5 + np.arange(180) - 32)) + 0, int(85.5)], 55
-        )
-        i_lat = int(round(0 + 89.5))  # lat 0
-        j_lon = int(round(0 - 0.5)) % 360
-        self.assertLess(grid["H_km"][i_lat, j_lon], 15)
+        np.testing.assert_array_equal(grid["H_km"], self.thickness)
 
     def test_assemble_batch(self):
-        path = ROOT / "present_crustal_thickness.dat"
-        if not path.is_file():
-            self.skipTest("source DAT not present")
-        b = assemble_modern_batch(path, sigma_km=3.0)
+        b = assemble_modern_batch(self.path, sigma_km=3.0)
         self.assertEqual(b["H_km"].shape, b["sigma_km"].shape)
+        np.testing.assert_array_equal(b["H_km"], self.thickness)
+        np.testing.assert_array_equal(b["sigma_km"], np.full((180, 360), 3.0))
         self.assertFalse(b["sigma_is_calibrated"])
         self.assertEqual(int(b["block_ids"].min()), int(b["block_ids"][0, 0]))
 
