@@ -154,7 +154,7 @@ maps = predictor.predict_grid([0, 30, 60])
 
 NORN 将全球古地壳厚度重建表述为受观测和物理关系约束的时空反演。框架图 A–C 使用年代条件 SFNO 表示正厚度场，卷积编码器、球谐谱分支和局部卷积分支共同提取空间结构，年龄通过 MLP 与 FiLM 调节隐藏通道：
 
-$$H_\theta(x,a)=\operatorname{softplus}(F_\theta(X,a)(x))+\epsilon.$$
+$$H_\theta(x,a)=\mathrm{softplus}(F_\theta(X,a)(x))+\epsilon.$$
 
 0–60 Ma 的 61 个锚点共享网络参数，连续年龄在相邻锚点之间线性插值。厚度历史由所有证据联合拟合；更换观测集合通常需要重新优化。
 

@@ -8,7 +8,7 @@
 
 网络使用卷积编码器、6 个 SFNO 模块和正值输出头。每个模块包含 Gauss 网格上的球谐变换、复数谱滤波和通道混合、逆变换，以及局部卷积分支。年龄先除以最大年龄，形成低频特征，经 MLP 与 FiLM 调节隐藏通道。使用 GroupNorm；没有随机 dropout 或跨批次更新的归一化状态。局部卷积经度周期填充、极区边缘复制；局部极区处理是近似，不应据此声称严格旋转等变性。
 
-$$H_\theta(x,a_m)=\operatorname{softplus}(F_\theta(X,a_m)(x))+0.5\ \mathrm{km}.$$
+$$H_\theta(x,a_m)=\mathrm{softplus}(F_\theta(X,a_m)(x))+0.5\ \mathrm{km}.$$
 
 输入是固定的 8 通道空间张量。内部严格遵循 torch-harmonics 的 **北到南 Gauss 纬度、经度从 0 开始**；原生现代网格是 **南到北、经度从 0.5° 开始**。两个网格通过显式保守映射或可微插值连接。特征的变形覆盖通道无独立资料时标为缺失，而不是宣称已经使用变形资料。
 
@@ -78,7 +78,7 @@ $$r_V=\frac{\Delta V+I_{flux}-I_{source}}{H_{ref}A_{ref}}.$$
 
 第一遍在固定网络参数下生成锚点场缓存 $U_m$，将它们视为叶变量，计算完整目标和 $G_m=\partial\mathcal L/\partial U_m$。受限源参数在这一步获得联合目标的直接梯度。
 
-第二遍按小批量重新生成锚点，对 $\langle\operatorname{stopgrad}(G_m),H_\theta^{(m)}\rangle$ **立即反向传播**。各批次之间不更新参数，所有梯度完成后才执行 AdamW。日志记录第一遍的真实目标；不会报告代理内积为损失。这样保留场缓存，但不同时保留 61 个年代的全部激活图。
+第二遍按小批量重新生成锚点，对 $\langle\mathrm{stopgrad}(G_m),H_\theta^{(m)}\rangle$ **立即反向传播**。各批次之间不更新参数，所有梯度完成后才执行 AdamW。日志记录第一遍的真实目标；不会报告代理内积为损失。这样保留场缓存，但不同时保留 61 个年代的全部激活图。
 
 源码：[trainer.py](../src/norn_earth/training/trainer.py)。完整观测和物理目标的梯度等价性在 [test_release.py](../tests/test_release.py) 中验证。
 
