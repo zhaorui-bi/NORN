@@ -48,6 +48,10 @@ def make_age_nodes(age_lower, age_upper, k, domain=(0.0, 60.0), distribution="un
             return np.array([]), np.array([]), 0.0
         return np.array([lo]), np.array([1.0]), 1.0
     a, b = max(lo, d0), min(hi, d1)
+    # A continuous age interval touching only a domain endpoint has zero
+    # probability mass inside the domain, not a point-age observation.
+    if b <= a:
+        return np.array([]), np.array([]), 0.0
     if distribution == "uniform":
         total = hi - lo
         c = (b - a) / total

@@ -130,6 +130,10 @@ def create_demo(
     config.physics.budget_weight = 0.1
     config.physics.birth_weight = 0.1
     config.physics.source_prior_weight = 0.01
+    # This manufactured fixture explicitly exercises the legacy extension;
+    # ordinary Config() and the production templates default to pure ML.
+    config.training.objective = "reconstruction"
+    config.training.selection_metric = "joint_nll"
     config.training.steps = steps
     config.training.device = device
     config.training.learning_rate = 0.003

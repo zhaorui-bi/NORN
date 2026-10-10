@@ -1,5 +1,6 @@
 """Portable, validated JSON configurations. Relative paths are config-relative."""
 
+import copy
 from dataclasses import asdict, dataclass, field, fields
 import json
 import math
@@ -15,6 +16,10 @@ class GridConfig:
 
 @dataclass
 class ModelConfig:
+    backbone: str = "sfno"
+    head_mode: str = "absolute"
+    time_frequency_bands: int = 2
+    ffn_multiplier: int = 2
     width: int = 32
     blocks: int = 6
     lmax: int = 32
@@ -32,6 +37,12 @@ class DataConfig:
     modern: Optional[str] = None
     rotations: Optional[str] = None
     static_polygons: Optional[str] = None
+    continental_polygons: Optional[str] = None
+    topologies: Optional[str] = None
+    geometry_mode: str = "static"
+    geometry_source: str = "gpml"
+    plate_gmt_dir: Optional[str] = None
+    deformation_gmt_dir: Optional[str] = None
     coordinate_mode: str = "paleo"
     source_semantics: str = "unverified_proxy"
     holdout_csv: Optional[str] = None
@@ -57,6 +68,10 @@ class PhysicsConfig:
 
 @dataclass
 class TrainingConfig:
+    objective: str = "data_only"
+    selection_metric: str = "validation_mae"
+    observation_huber_weight: float = 0.0
+    huber_beta_km: float = 5.0
     steps: int = 500
     learning_rate: float = 0.0005
     weight_decay: float = 0.0001
@@ -99,6 +114,47 @@ class Config:
     def to_dict(self):
         return asdict(self)
 
+    @property
+    def experiment_tag(self):
+        return "no_physics" if self.training.objective == "data_only" else "physics"
+
+    def with_tag(self, tag, physics_constraints=None):
+        """Change consistency terms only; preserve model, data loss and schedule.
+
+        Tag runs get separate directories unless the CLI explicitly overrides
+        --output. Enabling physics requires a declared artifact; no silent
+        zero-weight 'physics' experiment is allowed.
+        """
+        config = copy.deepcopy(self)
+        if tag == "no_physics":
+            if physics_constraints is not None:
+                raise ValueError("--physics-constraints requires --tag physics")
+            config.training.objective = "data_only"
+            config.training.temporal_smooth_weight = 0.0
+            config.physics = PhysicsConfig()
+        elif tag == "physics":
+            config.training.objective = "reconstruction"
+            if physics_constraints is not None:
+                config.physics.constraints = str(Path(physics_constraints).expanduser().resolve())
+            if not config.physics.constraints:
+                raise ValueError(
+                    "--tag physics requires --physics-constraints or physics.constraints"
+                )
+            if not any(
+                getattr(config.physics, item.name) > 0
+                for item in fields(config.physics)
+                if item.name.endswith("weight")
+            ):
+                config.physics.trajectory_weight = 0.05
+                config.physics.budget_weight = 0.05
+        else:
+            raise ValueError("tag must be no_physics or physics")
+        root = Path(config.output_dir)
+        if root.name in ("no_physics", "physics"):
+            root = root.parent
+        config.output_dir = str(root / tag)
+        return config.validate()
+
     def validate(self):
         if self.schema_version != 1:
             raise ValueError("Unsupported configuration schema_version")
@@ -111,13 +167,39 @@ class Config:
             raise ValueError(
                 "Model requires 8 input channels, width>=2, blocks>=1, time_features>=2"
             )
+        if m.backbone not in ("sfno", "gated_sfno"):
+            raise ValueError("model.backbone must be sfno or gated_sfno")
+        if m.head_mode not in ("absolute", "input_residual"):
+            raise ValueError("model.head_mode must be absolute or input_residual")
+        if m.time_frequency_bands < 1 or m.ffn_multiplier < 1:
+            raise ValueError("time_frequency_bands and ffn_multiplier must be >= 1")
         if m.epsilon_km <= 0 or m.initial_thickness_km <= m.epsilon_km:
             raise ValueError("Require initial_thickness_km > epsilon_km > 0")
-        if self.max_age_ma <= 0 or self.anchor_step_myr <= 0:
-            raise ValueError("Age domain and anchor step must be positive")
+        if not 0 < self.max_age_ma <= 60 or self.anchor_step_myr <= 0:
+            raise ValueError("Require 0 < max_age_ma <= 60 and a positive anchor step")
         ratio = self.max_age_ma / self.anchor_step_myr
         if not math.isclose(ratio, round(ratio), abs_tol=1e-7) or self.n_anchors < 2:
             raise ValueError("max_age_ma must be a positive integer multiple of anchor_step_myr")
+        if d.geometry_mode not in ("static", "dynamic"):
+            raise ValueError("geometry_mode must be static or dynamic")
+        if d.geometry_source not in ("gpml", "gmt"):
+            raise ValueError("geometry_source must be gpml or gmt")
+        if d.geometry_source == "gmt" and (
+            d.geometry_mode != "dynamic" or not d.plate_gmt_dir or not d.deformation_gmt_dir
+        ):
+            raise ValueError("GMT geometry requires dynamic mode and both GMT snapshot directories")
+        if d.geometry_source != "gmt" and (d.plate_gmt_dir or d.deformation_gmt_dir):
+            raise ValueError(
+                "Declared GMT sources require geometry_source=gmt; refusing to ignore them"
+            )
+        if d.geometry_mode == "dynamic":
+            if d.coordinate_mode != "paleo":
+                raise ValueError("Dynamic geometry requires paleo observation coordinates")
+            if not all((d.rotations, d.static_polygons, d.continental_polygons, d.topologies)):
+                raise ValueError(
+                    "Dynamic geometry requires rotations, static_polygons, "
+                    "continental_polygons and topologies from a consistent reconstruction model"
+                )
         if d.coordinate_mode not in ("paleo", "present"):
             raise ValueError("coordinate_mode must be paleo or present")
         if d.position_failure not in ("drop", "error"):
@@ -148,8 +230,30 @@ class Config:
                 raise ValueError(f"training.{name} must be >= 1")
         if t.learning_rate <= 0 or t.gradient_clip <= 0 or t.warmup_steps < 0 or t.weight_decay < 0:
             raise ValueError("Invalid optimizer parameters")
+        if t.objective not in ("reconstruction", "data_only"):
+            raise ValueError("training.objective must be reconstruction or data_only")
+        if t.selection_metric not in ("joint_nll", "validation_nll", "validation_mae"):
+            raise ValueError("Unknown training.selection_metric")
+        if not math.isfinite(t.huber_beta_km) or t.huber_beta_km <= 0:
+            raise ValueError("huber_beta_km must be finite and positive")
+        if t.objective == "data_only" and (
+            p.constraints is not None
+            or any(getattr(p, f.name) != 0 for f in fields(p) if f.name.endswith("weight"))
+            or t.temporal_smooth_weight != 0
+        ):
+            raise ValueError(
+                "data_only forbids physics constraints artifacts/weights and temporal smoothing"
+            )
         for obj, names in (
-            (t, ("modern_weight", "observation_weight", "temporal_smooth_weight")),
+            (
+                t,
+                (
+                    "modern_weight",
+                    "observation_weight",
+                    "temporal_smooth_weight",
+                    "observation_huber_weight",
+                ),
+            ),
             (
                 p,
                 (
@@ -180,7 +284,18 @@ _SECTIONS = {
     "training": TrainingConfig,
 }
 _PATHS = {
-    "data": ("prepared", "observations", "modern", "rotations", "static_polygons", "holdout_csv"),
+    "data": (
+        "prepared",
+        "observations",
+        "modern",
+        "rotations",
+        "static_polygons",
+        "continental_polygons",
+        "topologies",
+        "plate_gmt_dir",
+        "deformation_gmt_dir",
+        "holdout_csv",
+    ),
     "physics": ("constraints",),
 }
 

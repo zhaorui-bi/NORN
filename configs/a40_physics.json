@@ -31,6 +31,11 @@
     "holdout_csv": "../processed/challenge_test_set.csv",
     "validation_fraction": 0.1
   },
+  "physics": {
+    "constraints": "../processed/gmt_rigid_priors.npz",
+    "trajectory_weight": 0.05,
+    "budget_weight": 0.05
+  },
   "training": {
     "steps": 500,
     "device": "cuda",
@@ -40,7 +45,7 @@
     "checkpoint_every": 25,
     "validation_every": 10,
     "log_every": 10,
-    "objective": "data_only",
+    "objective": "reconstruction",
     "selection_metric": "validation_mae",
     "observation_huber_weight": 0.0,
     "huber_beta_km": 5.0,
@@ -48,5 +53,5 @@
   },
   "max_age_ma": 60.0,
   "anchor_step_myr": 1.0,
-  "output_dir": "../outputs/gmt_a40/no_physics"
+  "output_dir": "../outputs/gmt_a40/physics"
 }

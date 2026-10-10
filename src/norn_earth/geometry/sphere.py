@@ -119,17 +119,13 @@ def polygon_signed_area_steradian(poly_v):
         poly = poly[:-1]
     if len(poly) < 3:
         raise ValueError("A polygon needs at least three distinct consecutive vertices")
-    n = len(poly)
-    turn = 0.0
-    for i in range(n):
-        prev, cur, nxt = poly[(i - 1) % n], poly[i], poly[(i + 1) % n]
-        t_in = prev - np.dot(prev, cur) * cur
-        t_out = nxt - np.dot(nxt, cur) * cur
-        t_in /= max(np.linalg.norm(t_in), 1e-15)
-        t_out /= max(np.linalg.norm(t_out), 1e-15)
-        # signed turn at the vertex (positive for CCW seen from outside)
-        turn += math.atan2(np.dot(cur, np.cross(t_out, t_in)), np.dot(t_in, t_out))
-    return turn - math.copysign((n - 2) * math.pi, turn)
+    # Signed solid angles of a triangle fan handle concave vertices. Summing
+    # signed *interior* angles as if all corners were convex spuriously adds
+    # multiples of 2*pi and can reject valid, highly concave GMT outlines.
+    a, b, c = poly[0], poly[1:-1], poly[2:]
+    numerator = np.einsum("j,ij->i", a, np.cross(b, c))
+    denominator = 1 + b @ a + c @ a + np.einsum("ij,ij->i", b, c)
+    return float((2 * np.arctan2(numerator, denominator)).sum())
 
 
 def spherical_winding(points_v, poly_v):
@@ -159,10 +155,9 @@ def spherical_winding(points_v, poly_v):
 def validate_ring(poly_lon, poly_lat, tol_excess_sr=None):
     """Ring sanity for point-in-polygon/coverage use.
 
-    A usable simple ring has |signed excess| <= 4*pi + eps. Local GMT exports
-    may contain zig-zag/double-traced paths whose excess is many times the
-    sphere; such rings must be flagged (and replaced by original GPML at G1),
-    never silently rasterized.
+    This finite-area sanity check does not certify absence of self-intersection.
+    The production GMT path additionally registers every vertex and edge with
+    original same-age GPML geometry, and uses pyGPlates polygon containment.
     """
     poly_v = lonlat_to_vectors(unwrap_longitudes(poly_lon), poly_lat)
     excess = polygon_signed_area_steradian(poly_v)
@@ -211,8 +206,9 @@ def distance_to_polygon_km(lon, lat, poly_lon, poly_lat):
         # projection of points onto the great circle plane
         proj = pts - np.outer(np.dot(pts, plane), plane)
         proj /= np.clip(np.linalg.norm(proj, axis=1, keepdims=True), 1e-15, None)
-        # inside the minor arc iff both endpoint dot products are positive
-        on_arc = (np.dot(proj, ai) >= 0) & (np.dot(proj, bi) >= 0)
+        # Positive endpoint dot products are not sufficient: e.g. an 80-degree
+        # query is outside a -10..10-degree equatorial arc but passes that test.
+        on_arc = angle_between(ai, proj) + angle_between(proj, bi) <= angle_between(ai, bi) + 1e-10
         d_arc = angle_between(pts, proj)
         d_end = np.minimum(angle_between(pts, ai[None, :]), angle_between(pts, bi[None, :]))
         best = np.minimum(best, np.where(on_arc, d_arc, d_end))

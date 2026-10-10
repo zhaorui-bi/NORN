@@ -23,9 +23,9 @@ FEATURE_NAMES = [
     "sin_lat",
     "cos_lat_cos_lon",
     "cos_lat_sin_lon",
-    "modern_thickness_div40",
-    "modern_continental_mask",
-    "static_plate_edge_distance_div3000",
+    "modern_reference_div40",
+    "continental_mask",
+    "plate_boundary_distance_div3000",
     "deformation_coverage",
     "cos_lat_squared",
 ]
@@ -107,6 +107,7 @@ def _geometry_features(config, modern):
 
 def prepare_dataset(config, output):
     """Write a self-contained, pickle-free NPZ dataset and a provenance manifest."""
+    config.validate()
     d, g = config.data, config.grid
     if not d.observations or not d.modern:
         raise ValueError("data.observations and data.modern are required for preparation")
@@ -148,6 +149,22 @@ def prepare_dataset(config, output):
                 valid &= ~table[flag].to_numpy()
     modern = assemble_modern_batch(d.modern, d.modern_sigma_km)
     features, feature_support = _geometry_features(config, modern)
+    if d.geometry_mode == "dynamic":
+        from .dynamic_geometry import build_dynamic_geometry
+
+        features, plate_ids, geometry = build_dynamic_geometry(config, modern, features)
+        feature_support.update(
+            static_plate_edges=False,
+            plate_boundaries=True,
+            continental_geometry=True,
+            deformation_coverage=True,
+        )
+    else:
+        features = np.repeat(features[None], config.n_anchors, axis=0)
+        plate_ids = np.full((config.n_anchors, g.nlat, g.nlon), -1, dtype=np.int32)
+        geometry = {"mode": "static", "binding": "identical baseline features at every age"}
+        feature_support["plate_boundaries"] = feature_support["static_plate_edges"]
+        feature_support["continental_geometry"] = False
     split, groups = _split_records(table, config)
     node_age, node_weight, node_record, mass = [], [], [], np.zeros(len(table))
     for i, row in enumerate(table.itertuples()):
@@ -201,7 +218,10 @@ def prepare_dataset(config, output):
         if getattr(d, name)
     }
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "geometry": geometry,
+        "input_layout": "age,channel,latitude,longitude",
+        "feature_ages_ma": config.anchor_ages.tolist(),
         "grid": {
             "nlat": g.nlat,
             "nlon": g.nlon,
@@ -234,6 +254,8 @@ def prepare_dataset(config, output):
     np.savez_compressed(
         output,
         inputs=features,
+        feature_ages=config.anchor_ages,
+        plate_ids=plate_ids,
         modern_H=modern["H_km"],
         modern_sigma=modern["sigma_km"],
         modern_area=modern["areas_km2"],
@@ -263,11 +285,40 @@ def load_dataset(path, config=None):
     with np.load(path, allow_pickle=False) as bundle:
         data = {key: bundle[key] for key in bundle.files}
     meta = json.loads(str(data.pop("metadata")))
-    if meta["schema_version"] != 1:
-        raise ValueError("Unsupported prepared dataset schema")
+    if meta["schema_version"] != 2:
+        raise ValueError("Legacy static dataset: prepare a new age-bound dataset (schema 2)")
+    ages = np.asarray(meta["feature_ages_ma"], dtype=np.float32)
+    if (
+        ages.ndim != 1
+        or len(ages) < 2
+        or not np.isfinite(ages).all()
+        or ages[0] != 0
+        or np.any(ages > 60)
+        or np.any(np.diff(ages) <= 0)
+        or not np.array_equal(
+            ages, np.arange(len(ages), dtype=np.float32) * meta["anchor_step_myr"]
+        )
+        or not np.isclose(ages[-1], meta["max_age_ma"])
+    ):
+        raise ValueError("Invalid geometry age ordering or 0–60 Ma domain")
+    grid = meta["grid"]
+    shape = (len(ages), 8, grid["nlat"], grid["nlon"])
+    if (
+        data["inputs"].shape != shape
+        or data["plate_ids"].shape != (shape[0], shape[2], shape[3])
+        or not np.array_equal(data["feature_ages"], ages)
+        or not np.isfinite(data["inputs"]).all()
+    ):
+        raise ValueError("Invalid age-bound inputs, geometry or feature age ordering")
     if config is not None:
-        if data["inputs"].shape != (8, config.grid.nlat, config.grid.nlon):
+        if shape != (config.n_anchors, 8, config.grid.nlat, config.grid.nlon):
             raise ValueError("Prepared dataset grid does not match the configuration")
+        if not np.array_equal(ages, config.anchor_ages):
+            raise ValueError("Prepared geometry ages do not match the training anchors")
+        if meta["geometry"]["mode"] != config.data.geometry_mode:
+            raise ValueError("Prepared geometry_mode differs; prepare a new dataset")
+        if meta["geometry"].get("source", "gpml") != config.data.geometry_source:
+            raise ValueError("Prepared geometry_source differs; prepare a new dataset")
         if (
             meta["max_age_ma"] != config.max_age_ma
             or meta["anchor_step_myr"] != config.anchor_step_myr
@@ -292,4 +343,5 @@ def load_dataset(path, config=None):
                     f"Prepared dataset has different data.{key}; prepare a new dataset"
                 )
     data["metadata"] = meta
+    data["dataset_sha256"] = sha256_file(path)
     return data

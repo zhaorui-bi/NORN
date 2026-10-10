@@ -91,6 +91,46 @@ def test_dataset_split_groups_and_age_weights(demo):
     np.testing.assert_allclose(sums[data["valid"]], 1, atol=1e-7)
     assert (data["node_lon"] < 0).any()
     assert data["metadata"]["coordinate_mode"] == "present"
+    assert data["inputs"].shape == (config.n_anchors, 8, config.grid.nlat, config.grid.nlon)
+    np.testing.assert_array_equal(data["feature_ages"], config.anchor_ages)
+
+
+def test_age_batches_preserve_input_age_pairing_and_backward():
+    class PairedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.scale = torch.nn.Parameter(torch.tensor(2.0))
+
+        def forward(self, x, age):
+            return self.scale * (x[:, :1] + age.reshape(-1, 1, 1, 1))
+
+    model = PairedModel()
+    inputs = torch.zeros(4, 8, 4, 8)
+    inputs[:, 0] = torch.arange(4)[:, None, None]
+    ages = torch.tensor([0.0, 20, 40, 60])
+    fields = anchor_fields(model, inputs, ages, 3)
+    torch.testing.assert_close(fields[:, 0, 0], torch.tensor([0.0, 42, 84, 126]))
+    fields.sum().backward()
+    full_gradient = model.scale.grad.clone()
+    model.zero_grad()
+    recompute_backward(model, inputs, ages, torch.ones_like(fields), 3)
+    torch.testing.assert_close(model.scale.grad, full_gradient)
+
+
+def test_prepared_dataset_rejects_corrupt_feature_age_order(demo, tmp_path):
+    config, data = demo
+    arrays = {key: value for key, value in data.items() if key != "metadata"}
+    for ages in [[0, 30, 30], [0, 30, 61]]:
+        meta = copy.deepcopy(data["metadata"])
+        meta["feature_ages_ma"] = ages
+        arrays["metadata"] = np.array(json.dumps(meta))
+        arrays["feature_ages"] = np.asarray(ages, dtype=np.float32)
+        path = tmp_path / "corrupt.npz"
+        np.savez_compressed(path, **arrays)
+        with pytest.raises(ValueError, match="age ordering"):
+            load_dataset(path, config)
+    with pytest.raises(ValueError, match="max_age_ma"):
+        config_from_dict({"max_age_ma": 61})
 
 
 def test_prepared_dataset_rejects_changed_error_scales(demo):
@@ -110,7 +150,7 @@ def test_full_objective_two_pass_gradient_equivalence_including_sources(demo, de
     full, twopass = copy.deepcopy(base), copy.deepcopy(base)
     loss_full = ReconstructionObjective(data, config, device)
     loss_two = ReconstructionObjective(data, config, device)
-    inputs = torch.tensor(data["inputs"], device=device).unsqueeze(0)
+    inputs = torch.tensor(data["inputs"], device=device)
     ages = torch.tensor(config.anchor_ages, device=device)
     fields = anchor_fields(full, inputs, ages, 2)
     value, _ = loss_full(fields)

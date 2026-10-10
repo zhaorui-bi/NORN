@@ -17,7 +17,7 @@ from ..losses.objective import ReconstructionObjective
 from ..models.operator import NornSFNO
 from ..utils.hashing import sha256_file, write_manifest
 
-CHECKPOINT_SCHEMA = 1
+CHECKPOINT_SCHEMA = 2
 
 
 def resolve_device(request):
@@ -32,19 +32,24 @@ def resolve_device(request):
 
 
 def anchor_fields(model, inputs, ages, batch_size):
+    """Paired inputs[m], ages[m]; never broadcast one modern map across ages."""
+    if inputs.ndim != 4 or len(inputs) != len(ages):
+        raise ValueError("Require one spatial input field per age, in matching order")
     fields = []
     for start in range(0, len(ages), batch_size):
         age = ages[start : start + batch_size].reshape(-1, 1)
-        fields.append(model(inputs.expand(len(age), -1, -1, -1), age)[:, 0])
+        fields.append(model(inputs[start : start + len(age)], age)[:, 0])
     return torch.cat(fields, dim=0)
 
 
 def recompute_backward(model, inputs, ages, field_gradient, batch_size):
     # Backward immediately per chunk. Summing 61 graph-carrying surrogate
     # tensors and calling backward once would retain every activation graph.
+    if inputs.ndim != 4 or len(inputs) != len(ages):
+        raise ValueError("Require one spatial input field per age, in matching order")
     for start in range(0, len(ages), batch_size):
         age = ages[start : start + batch_size].reshape(-1, 1)
-        h = model(inputs.expand(len(age), -1, -1, -1), age)[:, 0]
+        h = model(inputs[start : start + len(age)], age)[:, 0]
         (h * field_gradient[start : start + len(age)]).sum().backward()
 
 
@@ -52,30 +57,52 @@ def load_checkpoint(path, device="cpu"):
     checkpoint = torch.load(path, map_location=device, weights_only=True)
     if checkpoint.get("checkpoint_schema") != CHECKPOINT_SCHEMA:
         raise ValueError(
-            "Unsupported or legacy checkpoint; historical A40 weights require retraining"
+            "Legacy static checkpoint; age-bound geometry requires a new dataset and retraining"
         )
-    config = config_from_dict(checkpoint["config"])
+    # Missing mode/selector identifies legacy schema-2 training semantics;
+    # new public configs default to pure ML, but old weights remain portable.
+    payload = dict(checkpoint["config"])
+    payload["training"] = dict(payload.get("training", {}))
+    payload["training"].setdefault("objective", "reconstruction")
+    payload["training"].setdefault("selection_metric", "joint_nll")
+    config = config_from_dict(payload)
+    if checkpoint.get("experiment_tag", config.experiment_tag) != config.experiment_tag:
+        raise ValueError("Checkpoint experiment tag differs from its objective")
     model = NornSFNO(config.grid, config.model, config.max_age_ma).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
     inputs = checkpoint["inputs"].to(device)
     if (
-        inputs.shape != (1, 8, config.grid.nlat, config.grid.nlon)
+        inputs.shape != (config.n_anchors, 8, config.grid.nlat, config.grid.nlon)
         or not torch.isfinite(inputs).all()
     ):
-        raise ValueError("Invalid checkpoint input features")
+        raise ValueError("Invalid checkpoint age-bound input features")
+    geometry = checkpoint.get("geometry", {})
+    if (
+        "plate_ids" not in geometry
+        or "feature_ages" not in geometry
+        or geometry["plate_ids"].shape != (config.n_anchors, config.grid.nlat, config.grid.nlon)
+        or not torch.equal(geometry["feature_ages"].cpu(), torch.tensor(config.anchor_ages))
+    ):
+        raise ValueError("Invalid checkpoint geometry or mismatched feature ages")
     return checkpoint, config, model, inputs
 
 
-def _save(path, model, objective, optimizer, config, inputs, step, best, provenance, metrics):
+def _save(
+    path, model, objective, optimizer, config, inputs, step, best, provenance, metrics, plate_ids
+):
     body = {
         "checkpoint_schema": CHECKPOINT_SCHEMA,
         "software_version": __version__,
+        "experiment_tag": config.experiment_tag,
         "config": config.to_dict(),
         "model_state": model.state_dict(),
-        "physics_state": objective.physics.state_dict(),
         "optimizer_state": optimizer.state_dict(),
         "inputs": inputs.detach().cpu(),
+        "geometry": {
+            "plate_ids": plate_ids.cpu(),
+            "feature_ages": torch.tensor(config.anchor_ages),
+        },
         "completed_steps": int(step),
         "best_validation_score": float(best),
         "provenance": provenance,
@@ -83,6 +110,8 @@ def _save(path, model, objective, optimizer, config, inputs, step, best, provena
         "torch_rng_state": torch.get_rng_state(),
         "cuda_rng_states": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
     }
+    if objective.physics is not None:
+        body["physics_state"] = objective.physics.state_dict()
     temporary = path.with_suffix(".tmp")
     torch.save(body, temporary)
     os.replace(temporary, path)
@@ -93,6 +122,20 @@ def _numbers(values):
         key: float(value.detach()) if isinstance(value, torch.Tensor) else value
         for key, value in values.items()
     }
+
+
+def validation_score(training, metrics, parts, loss):
+    """Selection is explicit; MAE selection never includes training/modern loss."""
+    if not metrics:
+        if training.selection_metric != "joint_nll":
+            raise ValueError("Validation-based selection requires nonempty validation records")
+        return _numbers({"loss": loss})["loss"]
+    values = _numbers(metrics)
+    if training.selection_metric == "validation_mae":
+        return values["age_marginal_mean_mae_km"]
+    if training.selection_metric == "validation_nll":
+        return values["nll"]
+    return values["nll"] + training.modern_weight * _numbers(parts)["modern_nll"]
 
 
 def train(config, resume=None, stop_after=None):
@@ -114,20 +157,30 @@ def train(config, resume=None, stop_after=None):
         print("Preparing observations, reconstructed positions and spherical inputs...", flush=True)
         prepare_dataset(config, dataset)
     data = load_dataset(dataset, config)
-    inputs = torch.as_tensor(data["inputs"], device=device).unsqueeze(0)
+    inputs = torch.as_tensor(data["inputs"], device=device)
+    plate_ids = torch.as_tensor(data["plate_ids"])
     model = NornSFNO(config.grid, config.model, config.max_age_ma).to(device)
     objective = ReconstructionObjective(data, config, device)
-    parameters = list(model.parameters()) + list(objective.physics.parameters())
+    parameters = list(model.parameters())
+    if objective.physics is not None:
+        parameters += list(objective.physics.parameters())
     optimizer = torch.optim.AdamW(parameters, lr=t.learning_rate, weight_decay=t.weight_decay)
     ages = torch.as_tensor(config.anchor_ages, device=device)
     provenance = {
         "dataset_sha256": sha256_file(dataset),
         "dataset_metadata": data["metadata"],
-        "physics": objective.physics.metadata,
-        "physics_sha256": sha256_file(config.physics.constraints)
-        if config.physics.constraints
-        else None,
+        "objective": t.objective,
+        "experiment_tag": config.experiment_tag,
     }
+    if objective.physics is not None:
+        provenance.update(
+            {
+                "physics": objective.physics.metadata,
+                "physics_sha256": sha256_file(config.physics.constraints)
+                if config.physics.constraints
+                else None,
+            }
+        )
     start = 0
     best = float("inf")
     if resume:
@@ -148,10 +201,11 @@ def train(config, resume=None, stop_after=None):
         for key, value in vars(previous.training).items():
             if key not in adjustable and value != getattr(config.training, key):
                 raise ValueError(f"Cannot resume with changed training.{key}; start a new run")
-        if checkpoint["provenance"]["physics_sha256"] != provenance["physics_sha256"]:
+        if checkpoint["provenance"].get("physics_sha256") != provenance.get("physics_sha256"):
             raise ValueError("Physics artifact changed since the checkpoint")
         model.load_state_dict(checkpoint["model_state"])
-        objective.physics.load_state_dict(checkpoint["physics_state"])
+        if objective.physics is not None:
+            objective.physics.load_state_dict(checkpoint["physics_state"])
         optimizer.load_state_dict(checkpoint["optimizer_state"])
         torch.set_rng_state(checkpoint["torch_rng_state"].cpu())
         if device.type == "cuda" and checkpoint["cuda_rng_states"]:
@@ -183,7 +237,12 @@ def train(config, resume=None, stop_after=None):
             {
                 "runtime": runtime,
                 "records": data["metadata"]["splits"],
-                "physics": objective.physics.metadata.get("active_factors", {}),
+                "objective": t.objective,
+                **(
+                    {"physics": objective.physics.metadata.get("active_factors", {})}
+                    if objective.physics is not None
+                    else {}
+                ),
             },
             ensure_ascii=False,
         ),
@@ -223,11 +282,7 @@ def train(config, resume=None, stop_after=None):
                     last_metrics.update(
                         {f"validation_{k}": v for k, v in _numbers(metrics).items()}
                     )
-                    score = float(metrics["nll"]) + t.modern_weight * float(
-                        parts["modern_nll"].detach()
-                    )
-                else:
-                    score = float(loss.detach())
+                score = validation_score(t, metrics, parts, loss)
                 if score < best:
                     best = score
                     _save(
@@ -241,6 +296,7 @@ def train(config, resume=None, stop_after=None):
                         best,
                         provenance,
                         last_metrics,
+                        plate_ids,
                     )
             # Parameters stay fixed between the cache and every recomputation.
             recompute_backward(model, inputs, ages, gradient, t.anchor_batch_size)
@@ -264,7 +320,12 @@ def train(config, resume=None, stop_after=None):
                 print(
                     f"step {step:5d}/{t.steps}: loss={last_metrics['loss']:.6f} "
                     f"obs={last_metrics['observation_nll']:.5f} modern={last_metrics['modern_nll']:.5f} "
-                    f"physics={last_metrics['physics_loss']:.6f} time={last_metrics['time_s']:.2f}s",
+                    + (
+                        f"physics={last_metrics['physics_loss']:.6f} "
+                        if objective.physics is not None
+                        else ""
+                    )
+                    + f"time={last_metrics['time_s']:.2f}s",
                     flush=True,
                 )
             if log_handle is None:
@@ -297,6 +358,7 @@ def train(config, resume=None, stop_after=None):
                     best,
                     provenance,
                     {},
+                    plate_ids,
                 )
         # Score the saved state itself, not the previous optimizer state.
         model.eval()
@@ -307,9 +369,7 @@ def train(config, resume=None, stop_after=None):
             val = objective.observation_metrics(final_fields, "validation")
             if val:
                 final_metrics.update({f"validation_{k}": v for k, v in _numbers(val).items()})
-                final_score = float(val["nll"]) + t.modern_weight * float(final_parts["modern_nll"])
-            else:
-                final_score = float(final_loss)
+            final_score = validation_score(t, val, final_parts, final_loss)
         if final_score < best:
             best = final_score
             _save(
@@ -323,6 +383,7 @@ def train(config, resume=None, stop_after=None):
                 best,
                 provenance,
                 final_metrics,
+                plate_ids,
             )
         _save(
             output / "last.pt",
@@ -335,9 +396,11 @@ def train(config, resume=None, stop_after=None):
             best,
             provenance,
             final_metrics,
+            plate_ids,
         )
         report = {
             "completed_steps": end,
+            "experiment_tag": config.experiment_tag,
             "requested_steps": t.steps,
             "completed": end == t.steps,
             "initial_loss_this_invocation": initial_loss,
@@ -349,10 +412,14 @@ def train(config, resume=None, stop_after=None):
             if device.type == "cuda"
             else 0,
             "checkpoint_sha256": sha256_file(output / "last.pt"),
-            "source_coefficients_km_myr": objective.physics.sources().detach().cpu().tolist()
-            if objective.physics.sources is not None
-            else [],
+            "selection_metric": t.selection_metric,
         }
+        if objective.physics is not None:
+            report["source_coefficients_km_myr"] = (
+                objective.physics.sources().detach().cpu().tolist()
+                if objective.physics.sources is not None
+                else []
+            )
         write_manifest(output / "training_summary.json", report)
         print(json.dumps(report, ensure_ascii=False, indent=2), flush=True)
         return report

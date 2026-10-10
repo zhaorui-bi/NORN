@@ -47,12 +47,56 @@ class NornPredictor:
         )
         return query.sample(self.anchor_fields()).cpu().numpy().reshape(shape)
 
+    @torch.no_grad()
+    def predict_geometry(self, ages):
+        """Frozen age-bound geometry; no external plate files needed at inference.
+
+        Continuous channels interpolate like thickness. Categorical plate IDs
+        use the nearest anchor and nearest spatial grid node, never interpolation.
+        Fractional geometry is a display approximation, not topology resolution.
+        """
+        ages = np.atleast_1d(np.asarray(ages, dtype=float))
+        if ages.ndim != 1 or not len(ages):
+            raise ValueError("Provide a nonempty one-dimensional age list")
+        c = self.config
+        lats, lons = native_grid()
+        lon, lat = np.meshgrid(lons, lats)
+        channels = {
+            "continental_fraction": (self.inputs[:, 4] + 1) / 2,
+            "plate_boundary_distance_km": self.inputs[:, 5] * 3000,
+            "deformation_coverage": self.inputs[:, 6],
+        }
+        result = {key: [] for key in channels}
+        result["plate_id"] = []
+        pids = self.checkpoint["geometry"]["plate_ids"].to(self.device)
+        for age in ages:
+            q = make_query(
+                lon, lat, age, c.grid.nlat, c.grid.nlon, c.anchor_step_myr, c.n_anchors, self.device
+            )
+            for key, field in channels.items():
+                upper = 3000.0 if key == "plate_boundary_distance_km" else 1.0
+                result[key].append(q.sample(field).clamp(0, upper).cpu().numpy().reshape(lon.shape))
+            corner = q.weight.argmax(dim=1)
+            rows = torch.arange(len(corner), device=self.device)
+            anchor = q.a0 + (q.fraction >= 0.5).long()
+            result["plate_id"].append(
+                pids[anchor, q.i[rows, corner], q.j[rows, corner]].cpu().numpy().reshape(lon.shape)
+            )
+        return {key: np.stack(values) for key, values in result.items()}
+
     def predict_grid(self, ages):
         ages = np.atleast_1d(np.asarray(ages, dtype=float))
+        geometry = self.predict_geometry(ages)
         lats, lons = native_grid()
         lon, lat = np.meshgrid(lons, lats)
         fields = np.stack([self.predict_points(lon, lat, np.full_like(lon, age)) for age in ages])
-        return {"thickness_km": fields, "age_ma": ages, "latitude": lats, "longitude": lons}
+        return {
+            "thickness_km": fields,
+            "age_ma": ages,
+            "latitude": lats,
+            "longitude": lons,
+            **geometry,
+        }
 
 
 def export_prediction(predictor, ages, output, formats=("npz",)):
@@ -64,6 +108,9 @@ def export_prediction(predictor, ages, output, formats=("npz",)):
         "positive": "downward thickness magnitude",
         "latitude_order": "south_to_north",
         "coordinate_frame": "paleo positions in the checkpoint plate reconstruction reference frame",
+        "geometry_mode": predictor.config.data.geometry_mode,
+        "geometry": predictor.checkpoint["provenance"]["dataset_metadata"]["geometry"],
+        "geometry_interpolation": "continuous channels: linear; plate_id: nearest anchor/node",
         "interval_kind": "point_estimate",
         "calibrated_uncertainty": False,
         "checkpoint_sha256": sha256_file(predictor.checkpoint_path),
@@ -71,10 +118,14 @@ def export_prediction(predictor, ages, output, formats=("npz",)):
         "source_semantics": predictor.checkpoint["provenance"]["dataset_metadata"][
             "source_semantics"
         ],
-        "physics": predictor.checkpoint["provenance"]["physics"],
+        "objective": predictor.config.training.objective,
+        "experiment_tag": predictor.config.experiment_tag,
+        "geometry_source": predictor.config.data.geometry_source,
         "ages_ma": result["age_ma"].tolist(),
         "shape": list(result["thickness_km"].shape),
     }
+    if "physics" in predictor.checkpoint["provenance"]:
+        metadata["physics"] = predictor.checkpoint["provenance"]["physics"]
     if "npz" in formats:
         np.savez_compressed(
             output / "thickness.npz",
@@ -103,6 +154,15 @@ def export_prediction(predictor, ages, output, formats=("npz",)):
             attrs={"units": "km", "long_name": "Reconstructed crustal thickness"},
         )
         dataset = array.to_dataset()
+        for key in (
+            "continental_fraction",
+            "plate_boundary_distance_km",
+            "deformation_coverage",
+            "plate_id",
+        ):
+            dataset[key] = (("age_ma", "latitude", "longitude"), result[key])
+        dataset["plate_boundary_distance_km"].attrs["units"] = "km"
+        dataset["plate_id"].attrs["unassigned_value"] = -1
         dataset.attrs = {"metadata_json": json.dumps(metadata, ensure_ascii=False)}
         dataset.to_netcdf(output / "thickness.nc", engine="scipy")
     write_manifest(output / "inference_manifest.json", metadata)

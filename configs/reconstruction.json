@@ -1,16 +1,22 @@
 {
   "grid": {"nlat": 180, "nlon": 360},
-  "model": {"width": 32, "blocks": 6, "lmax": 32, "mmax": 32},
+  "model": {"backbone": "sfno", "width": 32, "blocks": 6, "lmax": 32, "mmax": 32},
   "data": {
-    "prepared": "../processed/dataset.npz",
+    "prepared": "../processed/gmt_dataset.npz",
     "observations": "../data/observations.csv",
     "modern": "../data/modern.dat",
-    "rotations": "../data/rotations.rot",
-    "static_polygons": "../data/static_polygons.gpmlz",
+    "rotations": "../data/external/zahirovic2022/Rotations/Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot",
+    "static_polygons": "../data/external/zahirovic2022/StaticPolygons/Global_EarthByte_GPlates_PresentDay_StaticPlatePolygons.shp",
+    "continental_polygons": "../data/external/zahirovic2022/ContinentalPolygons/Global_EarthByte_GPlates_PresentDay_ContinentalPolygons.shp",
+    "topologies": "../data/external/zahirovic2022/Topologies",
+    "geometry_mode": "dynamic",
+    "geometry_source": "gmt",
+    "plate_gmt_dir": "../data/plate_gmt",
+    "deformation_gmt_dir": "../data/deformation_gmt",
     "coordinate_mode": "paleo",
     "source_semantics": "unverified_proxy",
     "validation_fraction": 0.1
   },
-  "training": {"steps": 500, "device": "auto", "anchor_batch_size": 4},
+  "training": {"objective": "data_only", "selection_metric": "validation_mae", "observation_huber_weight": 0.0, "steps": 500, "device": "auto", "anchor_batch_size": 4},
   "output_dir": "../outputs/reconstruction"
 }

@@ -31,6 +31,19 @@ class TestChronology(unittest.TestCase):
         self.assertEqual(len(nodes), 0)
         self.assertEqual(c, 0.0)
 
+    def test_touch_only_intervals_have_zero_domain_mass(self):
+        for lower, upper in [(-5, 0), (60, 65)]:
+            for distribution in ["uniform", "triangular"]:
+                nodes, weights, mass = make_age_nodes(lower, upper, 8, distribution=distribution)
+                self.assertEqual(len(nodes), 0)
+                self.assertEqual(len(weights), 0)
+                self.assertEqual(mass, 0)
+        for age in [0, 60]:
+            nodes, weights, mass = make_age_nodes(age, age, 1)
+            self.assertEqual(list(nodes), [age])
+            self.assertEqual(list(weights), [1])
+            self.assertEqual(mass, 1)
+
     def test_narrow_vs_wide_node_counts(self):
         n, w, _ = make_age_nodes(10.0, 12.0, 3)
         self.assertEqual(len(n), 3)

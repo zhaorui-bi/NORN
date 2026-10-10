@@ -4,15 +4,15 @@ import math
 
 import numpy as np
 import torch
+from torch.nn import functional as F
 
 from ..geometry.regrid import native_grid
 from ..geometry.sampling import make_query
-from ..physics.differentiable import PhysicsObjective
 
 
 class ReconstructionObjective:
     def __init__(self, data, config, device="cpu"):
-        self.config = config
+        self.config = config.validate()
         self.data = data
         self.device = device
         c = config
@@ -60,7 +60,27 @@ class ReconstructionObjective:
         self.modern_block = torch.as_tensor(inverse, dtype=torch.long, device=device)
         self.block_counts = torch.bincount(self.modern_block).float()
         self.area = torch.as_tensor(data["modern_area"].ravel(), device=device)
-        self.physics = PhysicsObjective(c.physics.constraints, c, device)
+        self.physics = None
+        if c.training.objective != "data_only":
+            from ..physics.differentiable import PhysicsObjective
+
+            self.physics = PhysicsObjective(c.physics.constraints, c, device)
+            meta = self.physics.metadata
+            if meta.get("kind") == "model_derived_rigid_source_free_prior":
+                if meta.get("geometry_source", "gpml") != c.data.geometry_source:
+                    raise ValueError("Physics priors use a different geometry_source; rebuild them")
+                if meta.get("geometry_sha256") != data["metadata"]["geometry"].get(
+                    "source_sha256", {}
+                ):
+                    raise ValueError(
+                        "Physics priors differ from the dataset geometry; rebuild them"
+                    )
+                if ("dataset_sha256" in meta or c.data.geometry_source == "gmt") and (
+                    meta.get("dataset_sha256") != data.get("dataset_sha256")
+                ):
+                    raise ValueError(
+                        "Physics priors are bound to a different dataset; rebuild them"
+                    )
 
     def node_predictions(self, fields):
         values = self.query.sample(fields)
@@ -108,20 +128,33 @@ class ReconstructionObjective:
         if obs is None:
             raise ValueError("No training observations")
         modern, rmse = self.modern_loss(fields)
-        physical, physics_parts = self.physics(fields)
-        smooth = ((fields[1:] - fields[:-1]) / self.config.anchor_step_myr).square().mean()
+        huber = fields.new_zeros(())
+        if t.observation_huber_weight > 0:
+            mask = self.masks["train"]
+            expected = (self.node_predictions(fields)[mask] * self.weights[mask]).sum(-1)
+            # One auxiliary error per RECORD, not one per age node. Dividing
+            # by beta makes this data-fit term dimensionless like the NLL.
+            huber = F.smooth_l1_loss(expected, self.y[mask], beta=t.huber_beta_km) / t.huber_beta_km
         total = (
-            t.observation_weight * obs["nll"]
+            t.observation_weight * (obs["nll"] + t.observation_huber_weight * huber)
             + t.modern_weight * modern
-            + physical
-            + t.temporal_smooth_weight * smooth
         )
         parts = {
             "observation_nll": obs["nll"],
             "modern_nll": modern,
             "modern_area_rmse_km": rmse,
-            "temporal_smoothness": smooth,
-            "physics_loss": physical,
-            **{f"physics_{k}": v for k, v in physics_parts.items()},
         }
+        if t.objective == "data_only" or t.observation_huber_weight > 0:
+            parts["observation_huber"] = huber
+        if self.physics is not None:
+            physical, physics_parts = self.physics(fields)
+            smooth = ((fields[1:] - fields[:-1]) / self.config.anchor_step_myr).square().mean()
+            total = total + physical + t.temporal_smooth_weight * smooth
+            parts.update(
+                {
+                    "temporal_smoothness": smooth,
+                    "physics_loss": physical,
+                    **{f"physics_{k}": v for k, v in physics_parts.items()},
+                }
+            )
         return total, parts

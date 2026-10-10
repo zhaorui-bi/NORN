@@ -70,8 +70,21 @@ jobs:
                       print(f"::error title={case.get('name')}::{message}")
           PY
 
+  dynamic-gmt:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.9.17'
+          python-version: '3.11'
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked --extra cpu --extra kinematics --extra export --extra viz
+      - run: uv run --no-sync pytest -q
+
   build:
-    needs: [lint, test]
+    needs: [lint, test, dynamic-gmt]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "grid": {
+    "nlat": 180,
+    "nlon": 360
+  },
+  "model": {
+    "width": 32,
+    "blocks": 4,
+    "lmax": 32,
+    "mmax": 32,
+    "backbone": "gated_sfno",
+    "head_mode": "input_residual",
+    "time_frequency_bands": 8,
+    "ffn_multiplier": 2
+  },
+  "data": {
+    "prepared": "../processed/dynamic_dataset.npz",
+    "observations": "../processed/observations.csv",
+    "modern": "../../present_crustal_thickness.dat",
+    "rotations": "../data/external/muller2019/Rotations/Muller_etal_2019_CombinedRotations.rot",
+    "static_polygons": "../data/external/muller2019/StaticPolygons/Muller_etal_2019_Global_StaticPlatePolygons.gpmlz",
+    "continental_polygons": "../data/external/muller2019/ContinentalPolygons/Global_PresentDay_ContPolygons_2019_v1.shp",
+    "topologies": "../data/external/muller2019/Topologies/Muller_etal_2019_PlateBoundaries_DeformingNetworks.gpmlz",
+    "geometry_mode": "dynamic",
+    "coordinate_mode": "paleo",
+    "source_semantics": "unverified_proxy",
+    "holdout_csv": "../processed/challenge_test_set.csv",
+    "validation_fraction": 0.1
+  },
+  "training": {
+    "steps": 500,
+    "device": "cuda",
+    "anchor_batch_size": 16,
+    "learning_rate": 0.0005,
+    "warmup_steps": 25,
+    "checkpoint_every": 25,
+    "validation_every": 10,
+    "log_every": 10,
+    "objective": "data_only",
+    "selection_metric": "validation_mae",
+    "observation_huber_weight": 1.0,
+    "huber_beta_km": 5.0,
+    "temporal_smooth_weight": 0.0
+  },
+  "max_age_ma": 60.0,
+  "anchor_step_myr": 1.0,
+  "output_dir": "../outputs/ml_joint_a40"
+}

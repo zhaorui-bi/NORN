@@ -12,6 +12,11 @@ def _config(args):
     from .config import load_config
 
     config = load_config(args.config)
+    tag, constraints = getattr(args, "tag", None), getattr(args, "physics_constraints", None)
+    if constraints is not None and tag != "physics":
+        raise ValueError("--physics-constraints requires --tag physics")
+    if tag is not None:
+        config = config.with_tag(tag, constraints)
     if getattr(args, "output", None):
         config.output_dir = str(Path(args.output).resolve())
     if getattr(args, "device", None):
@@ -45,6 +50,14 @@ def main(argv=None):
         "train", help="Fit an instance-specific reconstruction and save standalone checkpoints"
     )
     train.add_argument("--config", required=True)
+    train.add_argument(
+        "--tag",
+        choices=["no_physics", "physics"],
+        help="Toggle consistency terms only; both tags share the same prepared geometry/model/data loss",
+    )
+    train.add_argument(
+        "--physics-constraints", help="Explicit priors artifact; requires --tag physics"
+    )
     train.add_argument("--output", help="Override the run directory")
     train.add_argument("--device", help="auto, cpu, cuda or cuda:N")
     train.add_argument("--steps", type=int, help="Override total optimizer steps")
@@ -67,6 +80,17 @@ def main(argv=None):
     infer.add_argument("--output", required=True)
     infer.add_argument("--device", default="auto")
     infer.add_argument("--formats", nargs="+", choices=["npz", "dat", "netcdf"], default=["npz"])
+    animate = sub.add_parser(
+        "animate", help="Render moving continents and thickness colours, 0 to 60 Ma"
+    )
+    animate.add_argument("--checkpoint", required=True)
+    animate.add_argument("--output", required=True, help="Output .mp4 or .gif")
+    animate.add_argument("--ages", nargs="+", default=["all"])
+    animate.add_argument("--device", default="auto")
+    animate.add_argument("--fps", type=float, default=6)
+    animate.add_argument("--vmin", type=float, default=0)
+    animate.add_argument("--vmax", type=float, default=80)
+    animate.add_argument("--all-crust", action="store_true", help="Also colour the oceanic crust")
     points = sub.add_parser(
         "predict-points", help="Predict thickness at paleo lon/lat/age CSV queries"
     )
@@ -133,6 +157,26 @@ def main(argv=None):
                 else [float(a) for a in args.ages]
             )
             _, meta = export_prediction(predictor, ages, args.output, args.formats)
+            print(json.dumps(meta, ensure_ascii=False, indent=2))
+        elif args.command == "animate":
+            from .inference import NornPredictor
+            from .visualization import export_animation
+
+            predictor = NornPredictor(args.checkpoint, args.device)
+            ages = (
+                predictor.config.anchor_ages
+                if args.ages == ["all"]
+                else [float(a) for a in args.ages]
+            )
+            meta = export_animation(
+                predictor,
+                args.output,
+                ages,
+                args.fps,
+                args.vmin,
+                args.vmax,
+                continental_only=not args.all_crust,
+            )
             print(json.dumps(meta, ensure_ascii=False, indent=2))
         elif args.command == "predict-points":
             import pandas as pd

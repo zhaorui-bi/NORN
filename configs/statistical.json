@@ -2,10 +2,15 @@
   "grid": {"nlat": 180, "nlon": 360},
   "model": {"width": 32, "blocks": 6, "lmax": 32, "mmax": 32},
   "data": {
-    "prepared": "../processed/release_dataset.npz",
+    "prepared": "../processed/dynamic_dataset.npz",
+    "rotations": "../data/external/muller2019/Rotations/Muller_etal_2019_CombinedRotations.rot",
+    "static_polygons": "../data/external/muller2019/StaticPolygons/Muller_etal_2019_Global_StaticPlatePolygons.gpmlz",
+    "continental_polygons": "../data/external/muller2019/ContinentalPolygons/Global_PresentDay_ContPolygons_2019_v1.shp",
+    "topologies": "../data/external/muller2019/Topologies/Muller_etal_2019_PlateBoundaries_DeformingNetworks.gpmlz",
+    "geometry_mode": "dynamic",
     "coordinate_mode": "paleo",
     "source_semantics": "unverified_proxy"
   },
-  "training": {"steps": 500, "device": "cuda", "anchor_batch_size": 4},
-  "output_dir": "../outputs/release_statistical"
+  "training": {"objective": "data_only", "selection_metric": "validation_mae", "steps": 500, "device": "cuda", "anchor_batch_size": 4},
+  "output_dir": "../outputs/dynamic_statistical"
 }

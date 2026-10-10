@@ -5,9 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
+from ..data.dynamic_geometry import geometry_source_hashes
 from ..data.kinematics_engine import KinematicsEngine
 from ..data.preparation import load_dataset
-from ..geometry.regrid import gauss_grid
+from ..geometry.regrid import conservative_native_to_gauss, gauss_grid, sample_at_points
 from ..utils.hashing import sha256_file, write_manifest
 
 
@@ -22,12 +23,47 @@ def prepare_rigid_priors(config, dataset_path, output, max_regions=48, min_edge_
     if not d.rotations or not d.static_polygons:
         raise ValueError("Rigid priors require the rotation and static polygon model")
     dataset = load_dataset(dataset_path, config)
-    if not dataset["metadata"]["feature_support"]["static_plate_edges"]:
-        raise ValueError("No static plate edge support in the prepared dataset")
+    expected_sources = {
+        **dataset["metadata"].get("source_sha256", {}),
+        **dataset["metadata"]["geometry"].get("source_sha256", {}),
+    }
+    actual_sources = geometry_source_hashes(config)
+    for key in ("rotations", "static_polygons"):
+        if key not in expected_sources or actual_sources[key] != expected_sources[key]:
+            raise ValueError(f"Rigid-prior {key} differs from the frozen dataset model")
+    for key, digest in actual_sources.items():
+        if key in expected_sources and digest != expected_sources[key]:
+            raise ValueError(f"Rigid-prior model/sidecar {key} differs from frozen geometry")
+    if not dataset["metadata"]["feature_support"]["plate_boundaries"]:
+        raise ValueError("No plate boundary support in the prepared dataset")
     inputs = dataset["inputs"]
     glat, glon, _ = gauss_grid(config.grid.nlat, config.grid.nlon)
     lon, lat = np.meshgrid(glon, glat[::-1])
-    valid = (inputs[4] > 0.5) & (inputs[5] * 3000 >= min_edge_distance_km) & (np.abs(lat) < 75)
+    modern_continent = conservative_native_to_gauss(
+        (dataset["modern_H"] >= 20).astype(float), config.grid.nlat, config.grid.nlon
+    )[::-1]
+    valid = (
+        (modern_continent > 0.75)
+        & (inputs[0, 5] * 3000 >= min_edge_distance_km)
+        & (inputs[0, 6] < 0.01)
+        & (np.abs(lat) < 75)
+    )
+
+    def supported_path(plo, pla, path_ages):
+        # A present-day interior is not automatically a rigid interior in the
+        # past. Check the bound geometry at every physics quadrature age.
+        for age in np.unique(path_ages):
+            time = float(age) / config.anchor_step_myr
+            lower = min(int(np.floor(time)), config.n_anchors - 2)
+            fraction = time - lower
+            feature = (1 - fraction) * inputs[lower] + fraction * inputs[lower + 1]
+            at = path_ages == age
+            distance = sample_at_points(feature[5, ::-1], pla[at], plo[at], (glat, glon))
+            network = sample_at_points(feature[6, ::-1], pla[at], plo[at], (glat, glon))
+            if np.any(distance * 3000 < min_edge_distance_km) or np.any(network > 0.01):
+                return False
+        return True
+
     candidates = np.column_stack([lon[valid], lat[valid]])
     if not len(candidates):
         raise ValueError("No interior candidates meet the declared support policy")
@@ -58,7 +94,7 @@ def prepare_rigid_priors(config, dataset_path, output, max_regions=48, min_edge_
             outlo, outla, ok = engine.positions_at(
                 np.full(len(ages), lo), np.full(len(ages), la), ages
             )
-            if ok.all():
+            if ok.all() and supported_path(outlo, outla, ages):
                 trajectories.append((pid, outlo, outla))
         else:
             # Four equal-area quadrature points inside a 1-degree material
@@ -70,7 +106,7 @@ def prepare_rigid_priors(config, dataset_path, output, max_regions=48, min_edge_
             outlo, outla, ok = engine.positions_at(
                 np.tile(plo, len(ages)), np.tile(pla, len(ages)), np.repeat(ages, 4)
             )
-            if ok.all():
+            if ok.all() and supported_path(outlo, outla, np.repeat(ages, 4)):
                 area = (
                     6371**2
                     * np.radians(1)
@@ -91,7 +127,11 @@ def prepare_rigid_priors(config, dataset_path, output, max_regions=48, min_edge_
         "schema_version": 1,
         "time_coordinate": "forward_tau=max_age-age",
         "kind": "model_derived_rigid_source_free_prior",
-        "support_policy": f"modern continental fraction >0.75; static model edge distance >= {min_edge_distance_km} km; |lat|<75; fully reconstructable",
+        "support_policy": f"modern continental fraction >0.75; |lat|<75; fully reconstructable; distance >= {min_edge_distance_km} km and outside resolved networks at all physics nodes",
+        "geometry_mode": d.geometry_mode,
+        "geometry_source": d.geometry_source,
+        "dataset_sha256": dataset["dataset_sha256"],
+        "geometry_sha256": dataset["metadata"]["geometry"].get("source_sha256", {}),
         "assumptions": [
             "Source-free rigid interiors are a sensitivity hypothesis, not verified geological process data",
             "Static polygon interior distance is not a guarantee of no deformation over 60 Myr",

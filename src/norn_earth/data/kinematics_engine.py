@@ -1,12 +1,11 @@
-"""P4 hard rule (v1.3): observation node positions from the G1-VERIFIED engine.
+"""Observation positions from the explicitly declared reconstruction model.
 
-Main-model node positions are rebuilt with pygplates + Muller2019 v2.0
-(static-polygon partitioning + plate-circuit rotation). The XLSX paleo
-columns are VALIDATION-ONLY (kinematics circularity is forbidden).
-
-Degradation: without pygplates, callers must fall back to present-day
-coordinates WITH a position-error inflation -- never to XLSX paleo columns
-for the main model (stat-pilot legacy behavior is explicitly flagged).
+Main-model node positions use static-polygon partitioning + plate-circuit
+rotation at the actual age. XLSX paleo columns are validation-only, never
+fallback training positions. The public paleo workflow requires pygplates;
+failures drop the entire record or raise. Present coordinates are permitted
+only in the explicit statistical/synthetic baseline. Source compatibility is
+not proof of geological validity or internal network deformation.
 """
 
 import numpy as np
@@ -57,7 +56,9 @@ class KinematicsEngine:
             try:
                 key = (float(ages[i]), int(pids[i]))
                 if key not in rotations:
-                    rotations[key] = self.rm.get_rotation(*key)
+                    rotations[key] = self.rm.get_rotation(
+                        *key, use_identity_for_missing_plate_ids=False
+                    )
                 R = rotations[key]
                 p = R * self.pygplates.PointOnSphere(float(lat[i]), float(lon[i]))
                 out_lat[i], out_lon[i] = p.to_lat_lon()

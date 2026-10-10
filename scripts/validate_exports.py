@@ -22,6 +22,13 @@ def validate(run, device, output):
         fields = bundle["thickness_km"]
         ages, lat, lon = (bundle[k] for k in ("age_ma", "latitude", "longitude"))
         metadata = json.loads(str(bundle["metadata"]))
+        geometry_keys = (
+            "continental_fraction",
+            "plate_boundary_distance_km",
+            "deformation_coverage",
+            "plate_id",
+        )
+        geometry = {key: bundle[key] for key in geometry_keys}
     assert fields.shape == (len(ages), 180, 360)
     assert np.isfinite(fields).all() and (fields > 0).all()
     np.testing.assert_array_equal(lat, np.arange(-89.5, 90, 1))
@@ -40,12 +47,20 @@ def validate(run, device, output):
         dat_error = max(dat_error, error)
     with xr.open_dataset(inference / "thickness.nc", engine="scipy") as nc:
         np.testing.assert_array_equal(nc["crustal_thickness"].values, fields)
+        for key in geometry_keys:
+            np.testing.assert_array_equal(nc[key].values, geometry[key])
         for key, values in zip(("age_ma", "latitude", "longitude"), (ages, lat, lon)):
             np.testing.assert_array_equal(nc[key].values, values)
     predictor = NornPredictor(checkpoint, device)
     np.testing.assert_array_equal(ages, predictor.config.anchor_ages)
-    repeated = predictor.predict_grid(ages)["thickness_km"]
+    prediction = predictor.predict_grid(ages)
+    repeated = prediction["thickness_km"]
     np.testing.assert_allclose(repeated, fields, rtol=2e-5, atol=2e-5)
+    for key in geometry_keys:
+        np.testing.assert_array_equal(prediction[key], geometry[key])
+    assert predictor.inputs.shape[0] == len(ages)
+    assert np.isfinite(geometry["continental_fraction"]).all()
+    assert ((geometry["continental_fraction"] >= 0) & (geometry["continental_fraction"] <= 1)).all()
     query_lon = np.array([-120.0, 240.0, 0.5, 359.5])
     query_lat = np.array([20.0, 20.0, -89.5, 89.5])
     query_age = np.array([13.4, 13.4, 0, predictor.config.max_age_ma])
@@ -73,7 +88,19 @@ def validate(run, device, output):
         copied.write_bytes(checkpoint.read_bytes())
         cpu = NornPredictor(copied, "cpu")
         cpu_points = cpu.predict_points(query_lon, query_lat, query_age)
-        np.testing.assert_allclose(cpu_points, points, rtol=2e-5, atol=2e-5)
+        # CUDA convolution defaults can use TF32. Audit strict float32 parity
+        # separately instead of hiding backend rounding by loosening tolerance.
+        cudnn_tf32 = torch.backends.cudnn.allow_tf32
+        matmul_tf32 = torch.backends.cuda.matmul.allow_tf32
+        try:
+            torch.backends.cudnn.allow_tf32 = False
+            torch.backends.cuda.matmul.allow_tf32 = False
+            strict = NornPredictor(copied, device)
+            strict_points = strict.predict_points(query_lon, query_lat, query_age)
+            np.testing.assert_allclose(cpu_points, strict_points, rtol=2e-5, atol=2e-5)
+        finally:
+            torch.backends.cudnn.allow_tf32 = cudnn_tf32
+            torch.backends.cuda.matmul.allow_tf32 = matmul_tf32
     report = {
         "status": "passed",
         "checkpoint_sha256": sha256_file(checkpoint),
@@ -87,11 +114,25 @@ def validate(run, device, output):
         "dat_files_checked": len(ages),
         "dat_max_rounding_error_km": dat_error,
         "netcdf_npz_exact": True,
+        "geometry_npz_netcdf_operator_exact": True,
+        "geometry_mode": metadata["geometry_mode"],
+        "age_bound_input_shape": list(predictor.inputs.shape),
+        "changed_continental_pixels_first_last": int(
+            (geometry["continental_fraction"][0] != geometry["continental_fraction"][-1]).sum()
+        ),
+        "changed_plate_id_pixels_first_last": int(
+            (geometry["plate_id"][0] != geometry["plate_id"][-1]).sum()
+        ),
         "operator_export_max_error_km": float(np.max(np.abs(repeated - fields))),
         "fractional_age_ma": 13.4,
         "periodic_longitude_exact": True,
         "training_inference_query_exact": True,
-        "standalone_cpu_gpu_max_error_km": float(np.max(np.abs(cpu_points - points))),
+        "standalone_cpu_gpu_default_max_error_km": float(np.max(np.abs(cpu_points - points))),
+        "standalone_cpu_gpu_strict_fp32_max_error_km": float(
+            np.max(np.abs(cpu_points - strict_points))
+        ),
+        "default_cudnn_allow_tf32": cudnn_tf32,
+        "strict_fp32_tolerance": {"rtol": 2e-5, "atol_km": 2e-5},
     }
     write_manifest(output, report)
     print(json.dumps(report, indent=2))

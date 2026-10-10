@@ -4,7 +4,7 @@ Portable data preparation, spherical inversion, physical constraints and
 standalone inference. Source datasets are never modified.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.5.0"
 
 PROJECT = "NORN"
 PROJECT_CN = "诺恩"

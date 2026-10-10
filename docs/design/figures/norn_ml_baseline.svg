@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="940" viewBox="0 0 1500 940">
+<defs>
+ <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="#245b83"/></marker>
+ <style>text{font-family:Arial,sans-serif;fill:#15364d} .title{font-size:30px;font-weight:bold}.heading{font-size:23px;font-weight:bold}.body{font-size:19px}.small{font-size:16px}.box{stroke-width:2;rx:14}.arrow{fill:none;stroke:#245b83;stroke-width:3;marker-end:url(#arrow)}</style>
+</defs>
+<rect width="1500" height="940" fill="white"/>
+<text x="750" y="44" text-anchor="middle" class="title">NORN 0.5 — Pure-ML baseline and controlled physics tag</text>
+<text x="750" y="76" text-anchor="middle" class="body">Both tags share same-age GMT inputs, backbone, data loss, split and training plan; 0–60 Ma</text>
+
+<rect x="20" y="104" width="380" height="405" class="box" fill="#e8f5ff" stroke="#168ed1"/>
+<text x="38" y="141" class="heading">A  Age-bound input data</text>
+<text x="38" y="177" class="body">Fixed spherical grid; moving geometry</text>
+<rect x="38" y="197" width="344" height="143" class="box" fill="white" stroke="#168ed1"/>
+<text x="55" y="229" class="body">Age 0 Ma   → X(0), plate IDs(0)</text>
+<text x="55" y="267" class="body">Age 1 Ma   → X(1), plate IDs(1)</text>
+<text x="55" y="298" class="body">...</text>
+<text x="55" y="325" class="body">Age 60 Ma → X(60), plate IDs(60)</text>
+<text x="38" y="375" class="small">GMT plate + network geometry at each age</text>
+<text x="38" y="400" class="small">Moving continents; modern reference input</text>
+<text x="38" y="425" class="small">Reference is an INPUT, not a historical label.</text>
+<text x="38" y="460" class="body">61 × 8 × 180 × 360</text>
+<text x="38" y="488" class="small">Pair inputs[m] with age[m] in both passes.</text>
+
+<rect x="430" y="104" width="660" height="405" class="box" fill="#f3ecff" stroke="#815ad0"/>
+<text x="448" y="141" class="heading">B  Shared neural backbone</text>
+<rect x="448" y="181" width="180" height="89" class="box" fill="white" stroke="#815ad0"/>
+<text x="538" y="211" text-anchor="middle" class="body">Spatial encoder</text>
+<text x="538" y="242" text-anchor="middle" class="small">X(a) → hidden field</text>
+<path d="M630 226 H675" class="arrow"/>
+<rect x="683" y="181" width="377" height="165" class="box" fill="white" stroke="#815ad0"/>
+<text x="872" y="215" text-anchor="middle" class="body">Selected baseline: 6 SFNO blocks</text>
+<text x="872" y="251" text-anchor="middle" class="small">Spectral mixing + periodic local conv</text>
+<text x="872" y="280" text-anchor="middle" class="small">Gated/residual package: optional ablation</text>
+<text x="872" y="317" text-anchor="middle" class="body">Shared parameters across all ages</text>
+<rect x="448" y="376" width="255" height="74" class="box" fill="white" stroke="#815ad0"/>
+<text x="576" y="405" text-anchor="middle" class="body">Age Fourier features → MLP</text>
+<text x="576" y="432" text-anchor="middle" class="small">FiLM, same age as the input slice</text>
+<path d="M705 413 H872 V348" class="arrow"/>
+<text x="448" y="483" class="body">Positive output; optional input-reference residual head</text>
+
+<path d="M400 226 H442" class="arrow"/>
+<rect x="1120" y="104" width="360" height="405" class="box" fill="#e9fbef" stroke="#22a46f"/>
+<text x="1138" y="141" class="heading">C  Prediction and movie</text>
+<text x="1138" y="193" class="body">H(0)   + geometry(0)</text>
+<text x="1138" y="233" class="body">H(30) + geometry(30)</text>
+<text x="1138" y="273" class="body">H(60) + geometry(60)</text>
+<path d="M1090 285 H1115" class="arrow"/>
+<text x="1138" y="332" class="body">0 → 60 Ma playback</text>
+<text x="1138" y="373" class="small">Colour: predicted thickness in km</text>
+<text x="1138" y="401" class="small">Same-age reconstructed outlines</text>
+<text x="1138" y="429" class="small">Fixed colour scale for all frames</text>
+<text x="1138" y="471" class="small">Standalone frozen checkpoint</text>
+
+<rect x="20" y="541" width="660" height="227" class="box" fill="#e8f5ff" stroke="#168ed1"/>
+<text x="38" y="578" class="heading">D  One prediction operator, one error per record</text>
+<text x="38" y="622" class="body">Age nodes + reconstructed positions → sampled predictions</text>
+<text x="38" y="664" class="body">Age-marginal mixture NLL and weighted mean prediction</text>
+<text x="38" y="702" class="body">Interval records are NOT replicated independent labels.</text>
+<text x="38" y="744" class="small">Identical operator for fitting, validation and exported point queries.</text>
+
+<rect x="710" y="541" width="770" height="227" class="box" fill="#fff6e8" stroke="#e69620"/>
+<text x="728" y="578" class="heading">E  Data-supervised loss only</text>
+<text x="728" y="622" class="body">L = L_age-NLL + λ_H · Huber(mean prediction, label) / β</text>
+<text x="728" y="664" class="body">    + λ_modern · L_modern-NLL</text>
+<text x="728" y="702" class="body">Modern loss uses observed 0 Ma labels only.</text>
+<text x="728" y="744" class="small">no_physics: data only. physics: add explicit priors, same network.</text>
+
+<path d="M1300 509 V527 H350 V536" class="arrow"/>
+<path d="M1300 525 H1095 V536" class="arrow"/>
+<rect x="20" y="806" width="1460" height="92" class="box" fill="#e8efff" stroke="#5380bc"/>
+<text x="750" y="842" text-anchor="middle" class="heading">F  Same split, seed and optimizer steps; checkpoint selection by validation MAE</text>
+<text x="750" y="875" text-anchor="middle" class="body">Deterministic two-pass gradients. Do not use opened test scores for tuning or model selection.</text>
+<path d="M350 768 V799" class="arrow"/><path d="M1095 768 V799" class="arrow"/>
+<text x="750" y="928" text-anchor="middle" class="small">GMT frame registered against GPML at every anchor. Physics is optional; video colours are not geological validation.</text>
+</svg>

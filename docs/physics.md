@@ -1,4 +1,6 @@
-# 物理约束 NPZ 接口
+# 可选物理约束 NPZ 接口
+
+默认 `--tag no_physics` 完全不导入或加载本接口。`--tag physics --physics-constraints ...` 才启用；两标签共享同龄双 GMT 输入、模型和数据 loss，见 [GMT／标签协议](gmt_tags.md)。
 
 所有物理量由外部资料或明确的先验假设提供，不能根据最终测试误差生成适用掩膜。软件没有自动填补未知通量或自由逐像素源项。
 
@@ -62,6 +64,8 @@ NPZ 使用 `allow_pickle=False` 读取；`metadata` 为一个 JSON 字符串标�
 | `budget_sigma_normalized` | `(B,)` | 无量纲残差的正误差尺度 |
 
 实现 $(\Delta V+I_{flux}-I_{source})/V_{ref}$。未知通量不置零；任一支持掩膜 false 时，整个因子移除，其无效数组允许含 NaN。活动因子里的 NaN 会报错。
+
+动态模式的 `prepare-rigid-priors` 会在每个物理积分年龄检查轨迹／材料域点：远离同龄板界，并在网络轮廓覆盖之外（GMT 模式使用同龄导出，包含 inactive outlines）。派生先验绑定 `geometry_source`、几何源哈希和冻结数据 `dataset_sha256`；不允许将旧 GPML 先验用于 GMT 或改变划分／节点位置后的数据。不能只以现代板内位置筛选 60 Myr 的整条路径；这些检查仍不构成独立的无变形或无源证据。
 
 对刚性共动材料域，`v=v_b` 是模型内可计算的关系，可以明确提供零相对通量；它与“缺少通量资料所以填零”不同。`prepare-rigid-priors` 生成的样例还假设净源为零，因此必须作为模型先验解释，不能声称源汇已经测量。
 

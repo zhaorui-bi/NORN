@@ -8,24 +8,17 @@
     "width": 32,
     "blocks": 6,
     "lmax": 32,
-    "mmax": 32,
-    "backbone": "sfno",
-    "head_mode": "absolute",
-    "time_frequency_bands": 2,
-    "ffn_multiplier": 2
+    "mmax": 32
   },
   "data": {
-    "prepared": "../processed/gmt_dataset.npz",
+    "prepared": "../processed/dynamic_dataset.npz",
     "observations": "../processed/observations.csv",
     "modern": "../../present_crustal_thickness.dat",
-    "rotations": "../data/external/zahirovic2022/Rotations/Zahirovic_etal_2022_OptimisedMantleRef_and_NNRMantleRef.rot",
-    "static_polygons": "../data/external/zahirovic2022/StaticPolygons/Global_EarthByte_GPlates_PresentDay_StaticPlatePolygons.shp",
-    "continental_polygons": "../data/external/zahirovic2022/ContinentalPolygons/Global_EarthByte_GPlates_PresentDay_ContinentalPolygons.shp",
-    "topologies": "../data/external/zahirovic2022/Topologies",
+    "rotations": "../data/external/muller2019/Rotations/Muller_etal_2019_CombinedRotations.rot",
+    "static_polygons": "../data/external/muller2019/StaticPolygons/Muller_etal_2019_Global_StaticPlatePolygons.gpmlz",
+    "continental_polygons": "../data/external/muller2019/ContinentalPolygons/Global_PresentDay_ContPolygons_2019_v1.shp",
+    "topologies": "../data/external/muller2019/Topologies/Muller_etal_2019_PlateBoundaries_DeformingNetworks.gpmlz",
     "geometry_mode": "dynamic",
-    "geometry_source": "gmt",
-    "plate_gmt_dir": "../../古板块边界-时间间隔每百万年 - 最终版",
-    "deformation_gmt_dir": "../../构造变形区边界-时间间隔每百万年 - 最终版",
     "coordinate_mode": "paleo",
     "source_semantics": "unverified_proxy",
     "holdout_csv": "../processed/challenge_test_set.csv",
@@ -48,5 +41,5 @@
   },
   "max_age_ma": 60.0,
   "anchor_step_myr": 1.0,
-  "output_dir": "../outputs/gmt_a40/no_physics"
+  "output_dir": "../outputs/ml_control_a40"
 }
