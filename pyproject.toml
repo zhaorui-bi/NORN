@@ -60,11 +60,6 @@ explicit = true
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-addopts = "-ra"
-
 [tool.ruff]
 target-version = "py39"
 line-length = 100
