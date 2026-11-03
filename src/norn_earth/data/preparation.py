@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ..config import DataConfig
 from ..geometry.regrid import (
     conservative_native_to_gauss,
     gauss_grid,
@@ -17,7 +18,7 @@ from ..losses.chronology import make_age_nodes
 from ..utils.hashing import sha256_file, write_manifest
 from .kinematics_engine import KinematicsEngine
 from .modern import assemble_modern_batch
-from .splits import site_clusters
+from .splits import chronological_holdout, site_clusters
 
 FEATURE_NAMES = [
     "sin_lat",
@@ -34,8 +35,16 @@ FEATURE_NAMES = [
 def _split_records(table, config):
     d = config.data
     lon = (table.present_lon.to_numpy(float) + 180) % 360 - 180
-    groups = site_clusters(lon, table.present_lat.to_numpy(float))
-    split = np.zeros(len(table), dtype=np.int64)  # 0 train, 1 validation, 2 test
+    if d.group_column:
+        if d.group_column not in table or table[d.group_column].isna().any():
+            raise ValueError("group_column must exist and contain a source/study ID for every row")
+        labels = table[d.group_column].astype(str).str.strip()
+        if (labels == "").any():
+            raise ValueError("group_column contains empty IDs")
+        _, groups = np.unique(labels.to_numpy(), return_inverse=True)
+    else:
+        groups = site_clusters(lon, table.present_lat.to_numpy(float))
+    split = np.zeros(len(table), dtype=np.int64)  # -1 buffer, 0 train, 1 validation, 2 test
     test = np.zeros(len(table), bool)
     if d.holdout_csv:
         holdout = pd.read_csv(d.holdout_csv)
@@ -56,14 +65,25 @@ def _split_records(table, config):
         test = table.observation_id.isin(held_ids).to_numpy()
         # Remove the entire geographic group, not only its challenge-age rows.
         test = np.isin(groups, np.unique(groups[test]))
+    if d.test_age_window_ma is not None:
+        # Age support, not representative age, decides exclusion from training.
+        ages = table.copy()
+        ages["age_lower_ma"] = np.minimum(table.age_lower_ma, table.age_upper_ma)
+        ages["age_upper_ma"] = np.maximum(table.age_lower_ma, table.age_upper_ma)
+        ages["age_representative_ma"] = (ages.age_lower_ma + ages.age_upper_ma) / 2
+        _, test, buffer = chronological_holdout(ages, d.test_age_window_ma, d.test_max_age_width_ma)
+        split[buffer] = -1
+        if not test.any():
+            raise ValueError("The chronological test window has no eligible narrow-age records")
     split[test] = 2
-    available = np.unique(groups[~test])
+    eligible = split == 0
+    available = np.unique(groups[eligible])
     rng = np.random.default_rng(config.training.seed)
     rng.shuffle(available)
     nv = int(round(len(available) * d.validation_fraction))
     if d.validation_fraction and len(available) > 1:
         nv = min(len(available) - 1, max(1, nv))
-    split[np.isin(groups, available[:nv]) & ~test] = 1
+    split[np.isin(groups, available[:nv]) & eligible] = 1
     return split, groups
 
 
@@ -212,6 +232,10 @@ def prepare_dataset(config, output):
     sigma = np.sqrt(d.record_sigma_km**2 + src**2)
     if not np.any(valid & (split == 0)):
         raise ValueError("No eligible training records remain")
+    if d.test_age_window_ma is not None and not np.any(valid & (split == 2)):
+        raise ValueError(
+            "No eligible chronological test records remain after quality/position checks"
+        )
     hashes = {
         name: sha256_file(getattr(d, name))
         for name in ("observations", "modern", "rotations", "static_polygons", "holdout_csv")
@@ -246,7 +270,24 @@ def prepare_dataset(config, output):
             name: int((valid & (split == value)).sum())
             for value, name in enumerate(("train", "validation", "test"))
         },
-        "split_policy": "100 km geographic proxy groups; entire test groups removed; modern endpoints allowed (P-B)",
+        "split_policy": (
+            "entire age-support overlaps excluded; narrow-age test; broad-age buffer; "
+            if d.test_age_window_ma is not None
+            else "entire held-out groups removed; "
+        )
+        + (
+            f"validation grouped by {d.group_column}; "
+            if d.group_column
+            else "100 km geographic proxy groups; "
+        )
+        + "modern endpoints allowed (P-B)",
+        "split_protocol": {
+            "group_column": d.group_column,
+            "test_age_window_ma": d.test_age_window_ma,
+            "test_max_age_width_ma": d.test_max_age_width_ma,
+            "buffer_records": int((valid & (split == -1)).sum()),
+            "modern_endpoints_allowed": True,
+        },
         "uncertainty": "Fixed declared error scales; not calibrated historical confidence intervals",
     }
     output = Path(output)
@@ -332,13 +373,30 @@ def load_dataset(path, config=None):
                 "Prepared dataset coordinate mode/source semantics do not match the configuration"
             )
         frozen = meta["preparation_config"]["data"]
+        if bool(frozen.get("holdout_csv")) != bool(config.data.holdout_csv):
+            raise ValueError(
+                "Prepared dataset has different data.holdout_csv; prepare a new dataset"
+            )
+        if config.data.holdout_csv and config.data.holdout_csv != frozen["holdout_csv"]:
+            holdout_path = Path(config.data.holdout_csv)
+            if not holdout_path.is_file() or sha256_file(holdout_path) != meta["source_sha256"].get(
+                "holdout_csv"
+            ):
+                raise ValueError(
+                    "Prepared dataset has a different holdout file; prepare a new dataset"
+                )
         for key in (
             "record_sigma_km",
             "continental_sigma_km",
             "thin_crust_sigma_km",
             "modern_sigma_km",
+            "group_column",
+            "test_age_window_ma",
+            "test_max_age_width_ma",
+            "validation_fraction",
+            "holdout_column",
         ):
-            if frozen[key] != getattr(config.data, key):
+            if frozen.get(key, getattr(DataConfig(), key)) != getattr(config.data, key):
                 raise ValueError(
                     f"Prepared dataset has different data.{key}; prepare a new dataset"
                 )

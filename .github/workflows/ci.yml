@@ -1,0 +1,45 @@
+name: CPU validation
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@85856786d1ce8acfbcc2f13a5f3fbd6b938f9f41 # v7.1.2
+        with:
+          version: "0.9.17"
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Install locked CPU environment
+        run: uv sync --locked --extra cpu --extra export
+      - name: Lint
+        run: uv run --no-sync ruff check src tests examples
+      - name: Format
+        run: uv run --no-sync ruff format --check src tests examples
+      - name: Test
+        run: uv run --no-sync pytest -q tests
+      - name: Exercise generative pipeline
+        if: matrix.python == '3.11'
+        run: >-
+          uv run --no-sync python examples/generative_demo.py
+          --output outputs/ci_demo --steps 40 --prior-steps 30 --encoding-steps 30 --device cpu

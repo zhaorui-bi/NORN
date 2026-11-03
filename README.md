@@ -2,9 +2,9 @@
 
 **年代不确定性感知、动态几何条件化的全球古地壳厚度反演；当前以纯 ML baseline 为主。**
 
-NORN 用年代条件球面神经算子（SFNO）表示 0–60 Ma 的厚度历史。**每个年代绑定自己的板块几何输入 `X(a)`：网格固定，大陆和板界移动，厚度由模型预测。** 默认 `--tag no_physics` 仅使用观测和现代监督，不导入物理目标或计算时间平滑；`--tag physics` 只增加显式一致性项。两版都使用同一份逐年代板块／变形区 GMT 输入，不是只加时间 embedding。
+NORN 默认用年代条件球面神经算子（SFNO）表示 0–60 Ma 的厚度历史，也提供实验性的函数化 Tucker 潜空间模型与条件生成。**每个年代绑定自己的板块几何输入 `X(a)`：网格固定，大陆和板界移动，厚度由模型预测。** 默认 SFNO 的 `--tag no_physics` 仅使用观测和现代监督，不导入物理目标或计算时间平滑；`--tag physics` 只增加显式一致性项。两版都使用同一份逐年代板块／变形区 GMT 输入，不是只加时间 embedding。
 
-> 当前版本：**0.5.0，研究软件 Beta**。0.3/0.4 的 schema-2 权重仍可独立推理，但不能冒充 GMT 重训练结果或跨物理标签恢复；0.2 静态数据／权重不兼容。资料仍为 `unverified_proxy`；输出点估计，不提供已校准置信区间。
+> 当前版本：**0.5.0，研究软件 Beta**。0.3/0.4 的 schema-2 权重仍可独立推理，但不能冒充 GMT 重训练结果或跨物理标签恢复；0.2 静态数据／权重不兼容。资料仍为 `unverified_proxy`；默认输出点估计，实验性条件采样提供未校准的潜变量／预测区间。
 
 ## 使用 uv 安装
 
@@ -183,7 +183,7 @@ NORN/
 ├── src/norn_earth/        # 可安装的库和 CLI
 │   ├── data/             # 数据准备、观测和板块重建
 │   ├── geometry/         # 球面网格、可微取样和保守映射
-│   ├── models/           # SFNO 与统计基线
+│   ├── models/           # SFNO、函数化 Tucker、GP 与潜空间扩散
 │   ├── physics/          # 物理约束、适用掩膜和低维源项
 │   ├── losses/           # 统一的观测与联合目标
 │   ├── evaluation/       # 指标与选模
@@ -200,7 +200,84 @@ NORN/
 └── .gitignore
 ```
 
-旧实验脚本、历史配置、文档与测试已从工作区删除，可通过 Git 历史追溯。
+旧实验材料可通过 Git 历史追溯。本轮重构方案见 [NORN_REFACTOR_PLAN_CN.md](docs/NORN_REFACTOR_PLAN_CN.md)，可运行示例见 [generative_demo.py](examples/generative_demo.py)，验证记录见 [NORN_REFACTOR_VALIDATION_CN.md](docs/NORN_REFACTOR_VALIDATION_CN.md)，与 CRAI／SDIFT 的实现和证据核查见 [NORN_LITERATURE_AUDIT_CN.md](docs/NORN_LITERATURE_AUDIT_CN.md)。
+
+## 连续低秩表示与条件生成（实验性）
+
+本轮借鉴 [CRAI](https://www.nature.com/articles/s41561-020-0582-5) 的缺测验证思路及 [SDIFT](https://arxiv.org/html/2505.09284v3) 的函数化张量／时间相关潜空间思路，新增独立实现。新模型使用球面三维坐标因子、逐年代几何条件因子和低维时间核心；不使用经纬度接缝处不连续的坐标编码。当前厚度查询继续使用统一的空间／锚点插值，输出采样间距不代表已验证分辨率。
+
+在前面的完整配置中修改以下字段即可训练；其余数据、目标、选模和导出接口一致：
+
+```json
+{
+  "model": {
+    "backbone": "functional_tucker", "width": 32,
+    "spatial_rank": 8, "context_rank": 4,
+    "head_mode": "input_residual",
+    "latent_lengthscale_ma": 10.0, "latent_amplitude": 1.0,
+    "latent_scale_km": 10.0
+  },
+  "training": {"latent_gp_weight": 0.001}
+}
+```
+
+`latent_gp_weight=0` 为无核心 GP 正则的对照；正值只增加统计先验，不能解释成物理守恒。`latent_scale_km` 将无量纲核心映射到厚度量级。SFNO 仍为默认对照；新架构需要以验证数据决定是否适用。
+
+验证配置新增 `data.group_column`（例如 CSV 中完整的 `study_id`）与 `data.test_age_window_ma: [20,30]`。前者用于按真实研究来源分组，缺省仍为地理代理；后者将与年龄窗相交的记录整条移出训练，窄年龄记录进入测试、其余进入 buffer。`test_max_age_width_ma` 默认 5 Ma。两种验证问题应分开设计：时间窗测试不自动意味着来源独立或现代资料完全留出。改变协议后必须重新 prepare，旧 prepared 数据会拒绝加载。
+
+```bash
+norn prepare --config tucker.json --output processed/tucker_dataset.npz
+# tucker.json 的 data.prepared 指向上述文件
+norn train --config tucker.json --tag no_physics --output outputs/tucker
+norn sample-posterior --checkpoint outputs/tucker/best.pt \
+  --dataset processed/tucker_dataset.npz --output outputs/tucker/gp_posterior \
+  --draws 32 --chains 2 --burnin 100 --thin 2 --device cpu
+norn evaluate-posterior --checkpoint outputs/tucker/best.pt \
+  --dataset processed/tucker_dataset.npz \
+  --samples outputs/tucker/gp_posterior/latent_samples.npz \
+  --split validation --output outputs/tucker/predictive_validation.json --device cpu
+```
+
+GP 采样采用带接受拒绝步骤的 pCN，冻结拟合后的因子网络，仅用训练记录和现代端点约束核心。因为数据项按记录／现代区块归一，目标明确称作**条件广义后验**。它不包含因子网络、板块模型和代理关系的全部不确定性。`sampling_manifest.json` 记录接受率、基础 split R-hat 和先验参数；短链诊断不能证明收敛。`posterior_summary.npz` 是**北到南 Gauss 网格**，包含坐标、均值和潜在厚度分位区间；它与 `infer` 的原生网格点估计分开保存。`evaluate-posterior` 加入 Student-t 观测噪声和年龄混合后评估留出观测的预测区间，不能把这种覆盖率当作潜在真实古厚度的覆盖率。
+
+### 独立历史集合与扩散先验
+
+只有一段地球历史时，先用上面的 GP 方案。扩散训练需要独立的合成／已核验模拟历史。使用同一冻结解码器编码后才能合并核心，不能拼接分别训练的模型参数。首版要求所有历史共享 checkpoint 的板块几何、现代条件输入和网格；不同几何集合的条件先验学习尚未实现。
+
+`encode-ensemble` 输入 NPZ 包含：
+
+| 数组 | 内容 |
+|---|---|
+| `thickness_km`, `observed_mask` | `[history, age, latitude, longitude]`；掩膜为 0/1，未观测值可为 NaN |
+| `age_ma`, `latitude`, `longitude` | 与 checkpoint 相同的年龄和北到南 Gauss 网格坐标 |
+| `history_id` | 每个历史样本的唯一 ID |
+| `group_id` | 独立物理过程的父 ID；同一过程的不同窗口必须同组 |
+| `split` | `train`、`validation` 或 `test`；按父历史隔离 |
+| `metadata` | JSON 字符串，含 `source_semantics: synthetic` 或 `verified_simulation` |
+
+至少需要两个独立训练组和一个验证组；这是输入完整性条件，不代表这些数量足以训练可信生成先验。代码拒绝重复核心和跨划分的父历史组，标准化仅使用训练历史。
+
+```bash
+norn encode-ensemble --checkpoint outputs/tucker/best.pt \
+  --fields field_ensemble.npz --output processed/latent_ensemble.npz --device cpu
+norn train-prior --ensemble processed/latent_ensemble.npz \
+  --output outputs/diffusion_prior.pt --lengthscale-ma 10 --amplitude 1 --device cpu
+norn sample-posterior --checkpoint outputs/tucker/best.pt \
+  --dataset processed/tucker_dataset.npz --prior outputs/diffusion_prior.pt \
+  --output outputs/tucker/diffusion_posterior --device cpu
+```
+
+扩散模型在 GP 白化核心上学习序列去噪，再通过真实非线性年代混合似然进行近似观测引导。它不是 SDIFT 的闭式 MPDPS 复现，也不保证精确后验或已校准覆盖率。先验绑定因子权重、输入几何、网格和年代的指纹；微调因子或更换几何后必须重新编码、训练先验。
+
+从零运行完整合成示例（无需真实古位置或观测资料）：
+
+```bash
+uv run --no-sync python examples/generative_demo.py \
+  --output outputs/generative_demo --device cpu
+uv run --no-sync python -m pytest -q tests
+```
+
+示例比较现代参考、SFNO、函数化 Tucker，检验整时间窗留出，并完成 GP 采样、集合编码、扩散训练、观测引导和预测评估。完整场误差之外，另保存训练查询支持掩膜及其补集上的面积加权误差；现代条件输入仍保留。它使用独立解析合成历史，不证明真实地质恢复精度或方法优越性。
 
 ## 许可
 

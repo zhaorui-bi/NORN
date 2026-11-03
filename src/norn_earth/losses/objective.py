@@ -10,6 +10,20 @@ from ..geometry.regrid import native_grid
 from ..geometry.sampling import make_query
 
 
+def age_mixture_log_prob(mu, weights, y, sigma):
+    """One Student-t mixture per record; never treat quadrature nodes as labels."""
+    nu = 4.0
+    logp = (
+        math.lgamma((nu + 1) / 2)
+        - math.lgamma(nu / 2)
+        - 0.5 * math.log(nu * math.pi)
+        - torch.log(sigma[..., None])
+    )
+    logp = logp - (nu + 1) / 2 * torch.log1p(((y[..., None] - mu) / sigma[..., None]).square() / nu)
+    logw = torch.where(weights > 0, weights.log(), -torch.inf)
+    return torch.logsumexp(logw + logp, dim=-1)
+
+
 class ReconstructionObjective:
     def __init__(self, data, config, device="cpu"):
         self.config = config.validate()
@@ -93,19 +107,8 @@ class ReconstructionObjective:
         if not mask.any():
             return None
         mu = self.node_predictions(fields)[mask]
-        y = self.y[mask, None]
-        sigma = self.sigma[mask, None]
         weights = self.weights[mask]
-        nu = 4.0
-        logp = (
-            math.lgamma((nu + 1) / 2)
-            - math.lgamma(nu / 2)
-            - 0.5 * math.log(nu * math.pi)
-            - torch.log(sigma)
-        )
-        logp = logp - (nu + 1) / 2 * torch.log1p(((y - mu) / sigma).square() / nu)
-        logw = torch.where(weights > 0, weights.log(), -torch.inf)
-        nll = -torch.logsumexp(logw + logp, dim=1).mean()
+        nll = -age_mixture_log_prob(mu, weights, self.y[mask], self.sigma[mask]).mean()
         expected = (mu * weights).sum(-1)
         mae = (expected - self.y[mask]).abs().mean()
         return {"nll": nll, "age_marginal_mean_mae_km": mae, "n_records": int(mask.sum())}

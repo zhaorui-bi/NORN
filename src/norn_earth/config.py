@@ -28,6 +28,11 @@ class ModelConfig:
     time_features: int = 32
     epsilon_km: float = 0.5
     initial_thickness_km: float = 30.0
+    spatial_rank: int = 8
+    context_rank: int = 4
+    latent_lengthscale_ma: float = 10.0
+    latent_amplitude: float = 1.0
+    latent_scale_km: float = 10.0
 
 
 @dataclass
@@ -54,6 +59,9 @@ class DataConfig:
     modern_sigma_km: float = 3.0
     include_flagged_records: bool = False
     position_failure: str = "drop"
+    group_column: Optional[str] = None
+    test_age_window_ma: Optional[list] = None
+    test_max_age_width_ma: float = 5.0
 
 
 @dataclass
@@ -87,6 +95,7 @@ class TrainingConfig:
     seed: int = 42
     device: str = "auto"
     num_threads: int = 4
+    latent_gp_weight: float = 0.0
 
 
 @dataclass
@@ -167,8 +176,17 @@ class Config:
             raise ValueError(
                 "Model requires 8 input channels, width>=2, blocks>=1, time_features>=2"
             )
-        if m.backbone not in ("sfno", "gated_sfno"):
-            raise ValueError("model.backbone must be sfno or gated_sfno")
+        if m.backbone not in ("sfno", "gated_sfno", "functional_tucker"):
+            raise ValueError("model.backbone must be sfno, gated_sfno or functional_tucker")
+        if m.spatial_rank < 2 or m.context_rank < 2:
+            raise ValueError("Tucker spatial_rank and context_rank must be >= 2")
+        for name in ("latent_lengthscale_ma", "latent_amplitude", "latent_scale_km"):
+            if not math.isfinite(getattr(m, name)) or getattr(m, name) <= 0:
+                raise ValueError(f"model.{name} must be finite and positive")
+        if not math.isfinite(t.latent_gp_weight) or t.latent_gp_weight < 0:
+            raise ValueError("training.latent_gp_weight must be finite and nonnegative")
+        if t.latent_gp_weight and m.backbone != "functional_tucker":
+            raise ValueError("latent_gp_weight requires model.backbone=functional_tucker")
         if m.head_mode not in ("absolute", "input_residual"):
             raise ValueError("model.head_mode must be absolute or input_residual")
         if m.time_frequency_bands < 1 or m.ffn_multiplier < 1:
@@ -210,6 +228,23 @@ class Config:
             raise ValueError("Declare source_semantics explicitly")
         if not 0 <= d.validation_fraction < 1:
             raise ValueError("validation_fraction must be in [0,1)")
+        if d.test_age_window_ma is not None:
+            window = d.test_age_window_ma
+            if (
+                not isinstance(window, (list, tuple))
+                or len(window) != 2
+                or not all(isinstance(x, (int, float)) and math.isfinite(x) for x in window)
+                or not 0 <= window[0] < window[1] <= self.max_age_ma
+            ):
+                raise ValueError("test_age_window_ma must be [lower, upper] inside the age domain")
+            if d.holdout_csv:
+                raise ValueError("Choose test_age_window_ma or holdout_csv, not both")
+        if not math.isfinite(d.test_max_age_width_ma) or d.test_max_age_width_ma < 0:
+            raise ValueError("test_max_age_width_ma must be finite and nonnegative")
+        if d.group_column is not None and (
+            not isinstance(d.group_column, str) or not d.group_column.strip()
+        ):
+            raise ValueError("group_column must be a nonempty column name")
         for name in (
             "record_sigma_km",
             "continental_sigma_km",

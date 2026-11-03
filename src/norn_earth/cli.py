@@ -116,6 +116,64 @@ def main(argv=None):
     )
     smoke.add_argument("--output", required=True)
     smoke.add_argument("--device", default="auto")
+    sample = sub.add_parser(
+        "sample-posterior", help="Sample conditional functional-Tucker core histories"
+    )
+    sample.add_argument("--checkpoint", required=True)
+    sample.add_argument("--dataset", required=True)
+    sample.add_argument("--output", required=True)
+    sample.add_argument("--device", default="auto")
+    sample.add_argument("--draws", type=int, default=32)
+    sample.add_argument("--chains", type=int, default=2)
+    sample.add_argument("--burnin", type=int, default=100)
+    sample.add_argument("--thin", type=int, default=2)
+    sample.add_argument("--beta", type=float, default=0.1)
+    sample.add_argument("--temperature", type=float, default=1.0)
+    sample.add_argument("--alpha", type=float, default=0.1)
+    sample.add_argument("--seed", type=int, default=42)
+    sample.add_argument("--prior", help="Optional learned diffusion-prior checkpoint")
+    sample.add_argument("--diffusion-steps", type=int, default=32)
+    sample.add_argument("--guidance", type=float, default=0.1)
+    encode = sub.add_parser(
+        "encode-ensemble", help="Encode independent field histories in one frozen decoder"
+    )
+    encode.add_argument("--checkpoint", required=True)
+    encode.add_argument("--fields", required=True)
+    encode.add_argument("--output", required=True)
+    encode.add_argument("--steps", type=int, default=200)
+    encode.add_argument("--learning-rate", type=float, default=0.03)
+    encode.add_argument("--seed", type=int, default=42)
+    encode.add_argument("--device", default="auto")
+    prior = sub.add_parser(
+        "train-prior", help="Train GP-whitened core diffusion on independent histories"
+    )
+    prior.add_argument("--ensemble", required=True)
+    prior.add_argument("--output", required=True)
+    prior.add_argument("--steps", type=int, default=500)
+    prior.add_argument("--width", type=int, default=64)
+    prior.add_argument("--layers", type=int, default=2)
+    prior.add_argument("--batch-size", type=int, default=16)
+    prior.add_argument("--learning-rate", type=float, default=0.0003)
+    prior.add_argument("--lengthscale-ma", type=float, default=10.0)
+    prior.add_argument("--amplitude", type=float, default=1.0)
+    prior.add_argument("--seed", type=int, default=42)
+    prior.add_argument("--device", default="auto")
+    posterior_eval = sub.add_parser(
+        "evaluate-posterior", help="Score predictive mixtures on held-out observations"
+    )
+    posterior_eval.add_argument("--checkpoint", required=True)
+    posterior_eval.add_argument("--dataset", required=True)
+    posterior_eval.add_argument(
+        "--samples", required=True, help="latent_samples.npz from sample-posterior"
+    )
+    posterior_eval.add_argument("--output", required=True)
+    posterior_eval.add_argument(
+        "--split", choices=["train", "validation", "test"], default="validation"
+    )
+    posterior_eval.add_argument("--predictive-draws", type=int, default=256)
+    posterior_eval.add_argument("--alpha", type=float, default=0.1)
+    posterior_eval.add_argument("--seed", type=int, default=42)
+    posterior_eval.add_argument("--device", default="auto")
     args = parser.parse_args(argv)
     try:
         if args.command == "prepare":
@@ -234,6 +292,42 @@ def main(argv=None):
             from .data.demo import create_demo
 
             print(create_demo(args.output, args.device))
+        elif args.command == "sample-posterior":
+            from .models.posterior import sample_posterior
+
+            options = vars(args).copy()
+            options.pop("command")
+            print(json.dumps(sample_posterior(**options), ensure_ascii=False, indent=2))
+        elif args.command == "encode-ensemble":
+            from .models.ensemble import encode_ensemble
+
+            print(
+                json.dumps(
+                    encode_ensemble(
+                        args.checkpoint,
+                        args.fields,
+                        args.output,
+                        args.steps,
+                        args.learning_rate,
+                        args.seed,
+                        args.device,
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+        elif args.command == "train-prior":
+            from .models.diffusion import train_latent_prior
+
+            options = vars(args).copy()
+            options.pop("command")
+            print(json.dumps(train_latent_prior(**options), ensure_ascii=False, indent=2))
+        elif args.command == "evaluate-posterior":
+            from .models.posterior import evaluate_posterior
+
+            options = vars(args).copy()
+            options.pop("command")
+            print(json.dumps(evaluate_posterior(**options), ensure_ascii=False, indent=2))
         return 0
     except (
         ValueError,

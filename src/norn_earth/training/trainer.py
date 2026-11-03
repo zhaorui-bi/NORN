@@ -14,7 +14,7 @@ from .. import __version__
 from ..config import config_from_dict
 from ..data.preparation import load_dataset, prepare_dataset
 from ..losses.objective import ReconstructionObjective
-from ..models.operator import NornSFNO
+from ..models.factory import build_model
 from ..utils.hashing import sha256_file, write_manifest
 
 CHECKPOINT_SCHEMA = 2
@@ -68,7 +68,7 @@ def load_checkpoint(path, device="cpu"):
     config = config_from_dict(payload)
     if checkpoint.get("experiment_tag", config.experiment_tag) != config.experiment_tag:
         raise ValueError("Checkpoint experiment tag differs from its objective")
-    model = NornSFNO(config.grid, config.model, config.max_age_ma).to(device)
+    model = build_model(config).to(device)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     model.eval()
     inputs = checkpoint["inputs"].to(device)
@@ -124,6 +124,16 @@ def _numbers(values):
     }
 
 
+def regularized_loss(model, config, fields, objective):
+    """Add a parameter-space prior once, outside the field recomputation loop."""
+    loss, parts = objective(fields)
+    if config.training.latent_gp_weight:
+        prior = model.latent_prior_nll()
+        loss = loss + config.training.latent_gp_weight * prior
+        parts["latent_gp_nll"] = prior
+    return loss, parts
+
+
 def validation_score(training, metrics, parts, loss):
     """Selection is explicit; MAE selection never includes training/modern loss."""
     if not metrics:
@@ -159,7 +169,7 @@ def train(config, resume=None, stop_after=None):
     data = load_dataset(dataset, config)
     inputs = torch.as_tensor(data["inputs"], device=device)
     plate_ids = torch.as_tensor(data["plate_ids"])
-    model = NornSFNO(config.grid, config.model, config.max_age_ma).to(device)
+    model = build_model(config).to(device)
     objective = ReconstructionObjective(data, config, device)
     parameters = list(model.parameters())
     if objective.physics is not None:
@@ -264,7 +274,7 @@ def train(config, resume=None, stop_after=None):
             with torch.no_grad():
                 cached = anchor_fields(model, inputs, ages, t.anchor_batch_size)
             leaf = cached.detach().requires_grad_(True)
-            loss, parts = objective(leaf)
+            loss, parts = regularized_loss(model, config, leaf, objective)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Nonfinite objective at step {step}")
             if initial_loss is None:
@@ -364,7 +374,7 @@ def train(config, resume=None, stop_after=None):
         model.eval()
         with torch.no_grad():
             final_fields = anchor_fields(model, inputs, ages, t.anchor_batch_size)
-            final_loss, final_parts = objective(final_fields)
+            final_loss, final_parts = regularized_loss(model, config, final_fields, objective)
             final_metrics = {"step": end, "loss": float(final_loss), **_numbers(final_parts)}
             val = objective.observation_metrics(final_fields, "validation")
             if val:
