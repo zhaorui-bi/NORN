@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="320" viewBox="0 0 1280 320" role="img" aria-labelledby="title description">
+  <title id="title">NORN — crustal thickness through geological time</title>
+  <desc id="description">A schematic sphere, layered curves and a zero to sixty million year time axis, in teal and gold on a dark background.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#071823"/>
+      <stop offset="1" stop-color="#123447"/>
+    </linearGradient>
+    <radialGradient id="sphere" cx="0.3" cy="0.25" r="0.9">
+      <stop offset="0" stop-color="#234e5c"/>
+      <stop offset="1" stop-color="#0a2433"/>
+    </radialGradient>
+    <linearGradient id="timeline" gradientUnits="userSpaceOnUse" x1="364" y1="251" x2="1170" y2="251">
+      <stop offset="0" stop-color="#58d9bc"/>
+      <stop offset="1" stop-color="#efbc79"/>
+    </linearGradient>
+    <clipPath id="globe-clip"><circle cx="184" cy="155" r="105"/></clipPath>
+  </defs>
+
+  <rect width="1280" height="320" rx="20" fill="url(#background)"/>
+  <path d="M1020 0H1280V320H1150L980 150Z" fill="#71dbbf" opacity="0.035"/>
+  <circle cx="184" cy="155" r="123" fill="none" stroke="#58d9bc" stroke-opacity="0.1"/>
+  <circle cx="184" cy="155" r="105" fill="url(#sphere)" stroke="#71dbbf" stroke-width="1.5"/>
+
+  <g clip-path="url(#globe-clip)">
+    <g fill="none" stroke="#83c7c0" stroke-width="1" opacity="0.3">
+      <ellipse cx="184" cy="155" rx="35" ry="105"/>
+      <ellipse cx="184" cy="155" rx="76" ry="105"/>
+      <ellipse cx="184" cy="155" rx="105" ry="36"/>
+      <ellipse cx="184" cy="155" rx="105" ry="72"/>
+      <path d="M79 155H289M184 50V260"/>
+    </g>
+    <path d="M91 135L122 115L140 83L168 95L176 126L158 151L163 183L144 202L120 183L114 153Z" fill="#58d9bc" fill-opacity="0.16" stroke="#71dbbf" stroke-opacity="0.7" stroke-width="1.4"/>
+    <path d="M210 75L238 95L235 118L260 143L251 167L227 162L212 184L197 166L204 145L190 119Z" fill="#58d9bc" fill-opacity="0.12" stroke="#71dbbf" stroke-opacity="0.7" stroke-width="1.4"/>
+    <path d="M77 207C112 193 132 205 159 195S207 215 237 198S277 191 297 201" fill="none" stroke="#efbc79" stroke-width="3"/>
+    <path d="M78 220C112 206 132 218 159 208S207 228 237 211S277 204 297 214" fill="none" stroke="#efbc79" stroke-opacity="0.5" stroke-width="2"/>
+    <path d="M78 233C112 219 132 231 159 221S207 241 237 224S277 217 297 227" fill="none" stroke="#efbc79" stroke-opacity="0.25" stroke-width="2"/>
+  </g>
+  <g fill="#efbc79" stroke="#102c3a" stroke-width="3">
+    <circle cx="126" cy="122" r="5"/>
+    <circle cx="164" cy="155" r="5"/>
+    <circle cx="226" cy="131" r="5"/>
+    <circle cx="221" cy="184" r="5"/>
+  </g>
+  <text x="184" y="294" text-anchor="middle" fill="#a0bac5" font-family="DejaVu Sans, sans-serif" font-size="10" letter-spacing="3">SPHERICAL SCHEMATIC</text>
+
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="354" y="56" fill="#71dbbf" font-size="13" letter-spacing="3">NORN / EARTH RECONSTRUCTION</text>
+    <text x="350" y="111" fill="#eff7fa" font-size="43" font-weight="700">Crustal thickness,</text>
+    <text x="350" y="165" fill="#eff7fa" font-size="43" font-weight="700">through geological time.</text>
+    <text x="354" y="202" fill="#b6cbd5" font-size="17">Sparse observations. Dynamic plates. Spherical inversion.</text>
+    <path d="M364 251H1170" fill="none" stroke="url(#timeline)" stroke-width="2"/>
+    <g fill="#71dbbf">
+      <circle cx="364" cy="251" r="4"/>
+      <circle cx="565.5" cy="251" r="4"/>
+      <circle cx="767" cy="251" r="4"/>
+    </g>
+    <g fill="#efbc79">
+      <circle cx="968.5" cy="251" r="4"/>
+      <circle cx="1170" cy="251" r="4"/>
+    </g>
+    <g fill="#b6cbd5" font-size="12" text-anchor="middle">
+      <text x="364" y="278">0 Ma</text>
+      <text x="565.5" y="278">15 Ma</text>
+      <text x="767" y="278">30 Ma</text>
+      <text x="968.5" y="278">45 Ma</text>
+      <text x="1170" y="278">60 Ma</text>
+    </g>
+  </g>
+</svg>
